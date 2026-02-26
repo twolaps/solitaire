@@ -1,3 +1,4 @@
+import './fgui-global';
 import { _decorator, Component } from 'cc';
 import { UIManager } from './manager/UIManager';
 

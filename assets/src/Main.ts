@@ -1,6 +1,9 @@
 import './fgui-global';
 import { _decorator, Component } from 'cc';
+import { GRoot } from 'fairygui-cc';
 import { UIManager } from './manager/UIManager';
+import Package1Binder from './fgui/Package1/Package1Binder';
+import UI_comp_Game from './fgui/Package1/UI_comp_Game';
 
 const { ccclass } = _decorator;
 
@@ -12,8 +15,10 @@ export class Main extends Component {
         UIManager.inst.initRoot();
 
         try {
-            // 3. 加载资源包（假设你已经在 resources/ui 目录下放了包文件）
-            // await UIManager.inst.loadPackage("Common");
+            // 2. 加载 Package1 资源包（路径：resources/fgui/Package1）
+            await UIManager.inst.loadPackage("Package1");
+            // 3. 绑定 comp_Game 等组件类
+            Package1Binder.bindAll();
             
             this.enterGame();
         } catch (e) {
@@ -22,9 +27,8 @@ export class Main extends Component {
     }
 
     enterGame() {
-        console.log("框架搭建完成，进入游戏逻辑");
-        // 在这里实例化并显示你的第一个窗口
-        // let win = new MyMainMenu();
-        // win.show();
+        // 创建 comp_Game 界面并添加到根节点显示
+        const comp = UI_comp_Game.createInstance();
+        GRoot.inst.addChild(comp);
     }
 }

@@ -5,9 +5,5 @@
   /* Add your custom configuration here. */
   "compilerOptions": {
     "strict": false
-  },
-	"include": [
-    "assets/**/*.ts",
-    "assets/**/*.d.ts"  // 确保包含所有声明文件
-  ]
+  }
 }

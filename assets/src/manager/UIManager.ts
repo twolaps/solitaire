@@ -14,7 +14,7 @@ export class UIManager {
     public loadPackage(pkgName: string): Promise<void> {
         return new Promise((resolve, reject) => {
             // FGUI 3.x 推荐使用 resources.load 或自定义 Bundle 加载
-            UIPackage.loadPackage(`ui/${pkgName}`, (err) => {
+            UIPackage.loadPackage(`fgui/${pkgName}`, (err) => {
                 if (err) {
                     console.error(`加载 UI 包 ${pkgName} 失败:`, err);
                     reject(err);

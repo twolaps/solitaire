@@ -1,5 +1,6 @@
 /** This is an automatically generated class by FairyGUI. Please do not modify it. **/
 
+import * as fgui from "fairygui-cc";
 export default class UI_comp_Game extends fgui.GComponent {
 
 	public m_bg:fgui.GImage;

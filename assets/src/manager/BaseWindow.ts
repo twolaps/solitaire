@@ -1,6 +1,6 @@
-import * as fgui from "fairygui-cc";
+import { Window } from "fairygui-cc";
 
-export class BaseWindow extends fgui.Window {
+export class BaseWindow extends Window {
     public constructor() {
         super();
     }

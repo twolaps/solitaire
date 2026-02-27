@@ -6,6 +6,8 @@ import UI_comp_Card from "../../fgui/Package1/UI_comp_Card";
 export class CardView extends UI_comp_Card {
 
 	cfgKey: string;
+	/** 卡牌数字（1-13） */
+	value: number = 0;
 	isClear: boolean = false;
 
 	public static createInstance(): CardView {
@@ -23,6 +25,7 @@ export class CardView extends UI_comp_Card {
 	}
 
 	setDigital(value: number) {
+		this.value = value;
 		CardView.setDigitalLoader(this.m_typeLoader, value);
 	}
 
@@ -55,5 +58,46 @@ export class CardView extends UI_comp_Card {
 	setBack() {
 		this.m_ctrlSide.selectedIndex = 1;
 		this.touchable = false;
+	}
+
+	/** 向上抛出后抛物线落向目标位置，带大幅度旋转，符合落体运动规律 */
+	playThrowToHand(endX: number, endY: number, onComplete?: () => void) {
+		const startX = this.x;
+		const startY = this.y;
+
+		const T = 0.9;
+		const vy0 = -450;
+		const g = 1400;
+		const rotSpeed = 720;
+
+		const state = { t: 0 };
+		tween(state)
+			.to(T, { t: 1 }, {
+				onUpdate: () => {
+					const t = state.t * T;
+					const x = startX + (endX - startX) * state.t;
+					const y = startY + vy0 * t + 0.5 * g * t * t;
+					const rotation = rotSpeed * t;
+					this.setPosition(x, y);
+					this.rotation = rotation;
+				}
+			})
+			.call(() => onComplete?.())
+			.start();
+	}
+
+	/** 旋转式轻微摇晃（点击不能消除时播放） */
+	playShake() {
+		const baseRotation = this.rotation;
+		const amplitude = 8;
+		const duration = 0.04;
+
+		const state = { rotation: baseRotation };
+		tween(state)
+			.to(duration, { rotation: baseRotation - amplitude }, { easing: "sineInOut", onUpdate: () => this.rotation = state.rotation })
+			.to(duration * 2, { rotation: baseRotation + amplitude }, { easing: "sineInOut", onUpdate: () => this.rotation = state.rotation })
+			.to(duration * 2, { rotation: baseRotation - amplitude }, { easing: "sineInOut", onUpdate: () => this.rotation = state.rotation })
+			.to(duration, { rotation: baseRotation }, { easing: "sineInOut", onUpdate: () => this.rotation = state.rotation })
+			.start();
 	}
 }

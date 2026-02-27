@@ -1,10 +1,11 @@
-import { tween } from "cc";
+import { tween, screen, sys } from "cc";
 import * as fgui from "fairygui-cc";
 import { cardCfg, handCardCfg } from "../config/CardConfig";
 import UI_comp_Game from "../fgui/Package1/UI_comp_Game";
 import { CardView } from "./components/CardView";
 import { BaseWindow } from "../manager/BaseWindow";
 import UI_comp_Shuffle from "../fgui/Package1/UI_comp_Shuffle";
+import { AudioManager } from "../manager/AudioManager";
 
 /**
  * 绑定 comp_Game 组件的窗口
@@ -31,10 +32,58 @@ export class GameWindow extends BaseWindow {
 			this.compGame.makeFullScreen();
 	}
 
+	/** 用于 window resize 的回调绑定，便于 removeEventListener */
+	private _boundOnWindowResize = () => this.onWindowResize();
+
 	protected onShown(): void {
 		super.onShown();
 		this.showCard();
 		this.compGame.m_btnDownload.on(fgui.Event.CLICK, this.onBtnDownloadClick, this);
+
+		this.updateBgVisibility();
+		if (!sys.isMobile) {
+			// Web 端 screen.on('window-resize') 有 bug 只触发一次，改用原生 resize
+			if (sys.isBrowser && typeof window !== 'undefined') {
+				window.addEventListener('resize', this._boundOnWindowResize);
+			} else {
+				screen.on('window-resize', this.onWindowResize, this);
+			}
+		}
+	}
+
+	protected onHide(): void {
+		super.onHide();
+		if (!sys.isMobile) {
+			if (sys.isBrowser && typeof window !== 'undefined') {
+				window.removeEventListener('resize', this._boundOnWindowResize);
+			} else {
+				screen.off('window-resize', this.onWindowResize, this);
+			}
+		}
+	}
+
+	private onWindowResize() {
+		this.updateBgVisibility();
+	}
+
+	/** 获取当前可见区域尺寸（Web 端 screen.windowSize 不随 resize 更新，需用 window 或 view） */
+	private getViewportSize(): { width: number; height: number } {
+		if (sys.isBrowser && typeof window !== 'undefined') {
+			return { width: window.innerWidth, height: window.innerHeight };
+		}
+		return screen.windowSize;
+	}
+
+	/** 根据屏幕宽高比切换 bg/bg2：高/宽 >= 1280/720 为竖屏显示 bg，否则横屏显示 bg2；两者始终水平居中 */
+	private updateBgVisibility() {
+		const { width, height } = this.getViewportSize();
+		const isLandscape = height / width < 1280 / 720;
+		this.compGame.m_bg.visible = !isLandscape;
+		this.compGame.m_bg2.visible = isLandscape;
+
+		const parentW = this.compGame.width;
+		this.compGame.m_bg.setPosition((parentW - this.compGame.m_bg.width) / 2, this.compGame.m_bg.y);
+		this.compGame.m_bg2.setPosition((parentW - this.compGame.m_bg2.width) / 2, this.compGame.m_bg2.y);
 	}
 
 	private onBtnDownloadClick(event: fgui.Event) {
@@ -63,6 +112,7 @@ export class GameWindow extends BaseWindow {
 			cardView.playDropIn(cfg.pos[0], cfg.pos[1], index * 0.1);
 			index++;
 		} 
+		AudioManager.inst.playSFXByName("Package1", "deal", 1, 2);
 		this.checkSide();
 		// 卡牌入场动画结束后，imgTitle 从屏幕左侧移动到中间，并允许全屏点击
 		const cardCount = index;
@@ -84,10 +134,12 @@ export class GameWindow extends BaseWindow {
 			(cardView.value === 13 && this.handValue === 1)) {
 
 			this.playCardEliminate(cardView);
+			AudioManager.inst.playSFXByName("Package1", "move");
 		}
 		//不能消除
 		else {
 			this.contentPane.touchable = false;
+			AudioManager.inst.playSFXByName("Package1", "error");
 			cardView.playShake(() => {
 				this.contentPane.touchable = true;
 			});

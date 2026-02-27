@@ -7,7 +7,9 @@ import UI_comp_Shuffle from "./UI_comp_Shuffle";
 export default class UI_comp_Game extends fgui.GComponent {
 
 	public m_ctrlGuide:fgui.Controller;
+	public m_ctrlBg:fgui.Controller;
 	public m_bg:fgui.GImage;
+	public m_bg2:fgui.GImage;
 	public m_cardCon:fgui.GComponent;
 	public m_handCard:UI_comp_Card;
 	public m_shuffleArea:UI_comp_Shuffle;
@@ -21,7 +23,9 @@ export default class UI_comp_Game extends fgui.GComponent {
 
 	protected onConstruct():void {
 		this.m_ctrlGuide = this.getController("ctrlGuide");
+		this.m_ctrlBg = this.getController("ctrlBg");
 		this.m_bg = <fgui.GImage>(this.getChild("bg"));
+		this.m_bg2 = <fgui.GImage>(this.getChild("bg2"));
 		this.m_cardCon = <fgui.GComponent>(this.getChild("cardCon"));
 		this.m_handCard = <UI_comp_Card>(this.getChild("handCard"));
 		this.m_shuffleArea = <UI_comp_Shuffle>(this.getChild("shuffleArea"));

@@ -1,5 +1,5 @@
 import { _decorator, AudioSource, Node, director, AudioClip, assetManager, sys } from 'cc';
-import { UIPackage } from 'fairygui-cc';
+import { GRoot, UIPackage } from 'fairygui-cc';
 
 /**
  * 音频管理器
@@ -12,6 +12,9 @@ export class AudioManager {
 
     private _musicVolume: number = 0.8;
     private _sfxVolume: number = 1.0;
+
+    /** 音效资源缓存，避免重复加载 */
+    private _effectCache: Map<string, AudioClip> = new Map();
 
     // 本地存储的 Key
     private readonly KEY_MUSIC_VOL = 'SAVE_MUSIC_VOL';
@@ -47,13 +50,15 @@ export class AudioManager {
     }
 
     /**
-     * 接管 FairyGUI 内部的 playEffect 调用
+     * 接管 FairyGUI 内部的 playEffect 调用（FUI 传入 url 格式 "ui://包名/组件名"）
      */
     private bridgeFairyGUI() {
-        // 重写 FUI 的全局音效播放接口
         // @ts-ignore
-        fgui.GRoot.inst.playEffect = (url: string, volumeScale: number) => {
-            this.playSFXByUrl(url, volumeScale);
+        GRoot.inst.playEffect = (url: string, volumeScale: number) => {
+            const match = url.match(/^ui:\/\/([^/]+)\/(.+)$/);
+            if (match) {
+                this.playSFXByName(match[1], match[2], volumeScale);
+            }
         };
     }
 
@@ -81,16 +86,60 @@ export class AudioManager {
         this._sfxSource.playOneShot(clip, volumeScale * this._sfxVolume);
     }
 
-    /** 通过 FUI 的 URL 播放音效 (例如 "ui://Package/SoundName") */
-    public playSFXByUrl(url: string, volumeScale: number = 1.0) {
+    /**
+     * 通过包名 + 组件名播放 FUI 音效 (例如 pkgName="Package1", itemName="SoundClick")
+     * @param loopCount 填大于 0 的整数为播放次数，默认 1；填 0 为无限循环
+     */
+    public playSFXByName(pkgName: string, itemName: string, volumeScale: number = 1, loopCount: number = 1) {
+        const url = UIPackage.getItemURL(pkgName, itemName);
         const item = UIPackage.getItemByURL(url);
-        if (item && item.file) {
-            // 获取 FUI 资源库里的 AudioClip
-            const clip = item.owner.getItemAsset(item) as AudioClip;
-            if (clip) {
-                this.playSFX(clip, volumeScale);
+        if (!item || !item.file) return;
+        const clip = item.owner.getItemAsset(item) as AudioClip;
+        if (!clip) return;
+
+        const vol = volumeScale * this._sfxVolume;
+        const duration = (clip as any).duration ?? 0.5; // 音效时长，无则默认 0.5s
+
+        if (loopCount === 1) {
+            this._sfxSource.playOneShot(clip, vol);
+            return;
+        }
+        if (loopCount === 0) {
+            const playLoop = () => {
+                this._sfxSource.playOneShot(clip, vol);
+                this._sfxSource.scheduleOnce(playLoop, duration);
+            };
+            playLoop();
+            return;
+        }
+        // loopCount > 1：先播一次，再定时重复
+        this._sfxSource.playOneShot(clip, vol);
+        this._sfxSource.schedule(() => {
+            this._sfxSource.playOneShot(clip, vol);
+        }, duration, loopCount - 1, 0);
+    }
+
+    /**
+     * 通过 resources 路径播放音效 (例如 "music/move"，路径相对于 resources 目录)
+     * 首次加载会缓存，后续播放直接使用缓存
+     */
+    public async playEffectByRes(resPath: string, volumeScale: number = 1.0): Promise<void> {
+        let clip = this._effectCache.get(resPath);
+        if (!clip) {
+            try {
+                clip = await new Promise<AudioClip>((resolve, reject) => {
+                    assetManager.resources.load(resPath, AudioClip, (err, res) => {
+                        if (err) reject(err);
+                        else resolve(res as AudioClip);
+                    });
+                });
+                this._effectCache.set(resPath, clip);
+            } catch (e) {
+                console.warn(`[AudioManager] playEffectByRes 加载失败: ${resPath}`, e);
+                return;
             }
         }
+        this.playSFX(clip, volumeScale);
     }
 
     // ================== 设置与持久化 ==================

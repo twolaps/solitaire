@@ -11,7 +11,7 @@
   },
   {
     "__type__": "cc.Scene",
-    "_name": "scene",
+    "_name": "game",
     "_objFlags": 0,
     "__editorExtras__": {},
     "_parent": null,
@@ -283,6 +283,10 @@
     },
     "_enabled": true,
     "__prefab": null,
+    "bgmClip": {
+      "__uuid__": "d675697c-d56d-45ca-b9eb-eff7490af1b8",
+      "__expectedType__": "cc.AudioClip"
+    },
     "_id": "70T6xqsFhJ1Zd2nNAhQQTP"
   },
   {

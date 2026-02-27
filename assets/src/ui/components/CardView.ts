@@ -1,6 +1,7 @@
 import { tween } from "cc";
 import * as fgui from "fairygui-cc";
 import UI_comp_Card from "../../fgui/Package1/UI_comp_Card";
+import { AudioManager } from "../../manager/AudioManager";
 
 
 export class CardView extends UI_comp_Card {
@@ -112,6 +113,7 @@ export class CardView extends UI_comp_Card {
 			})
 			.call(() => {
 				this.setFront(); // 切换为正面，展开时即可看到数值
+				AudioManager.inst.playSFXByName("Package1", "move");
 			})
 			.to(flipOutDuration, { scaleX: 1 }, {
 				easing: "backOut",

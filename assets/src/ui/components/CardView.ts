@@ -2,6 +2,7 @@ import { tween } from "cc";
 import * as fgui from "fairygui-cc";
 import UI_comp_Card from "../../fgui/Package1/UI_comp_Card";
 
+
 export class CardView extends UI_comp_Card {
 
 	cfgKey: string;
@@ -9,6 +10,20 @@ export class CardView extends UI_comp_Card {
 
 	public static createInstance(): CardView {
 			return fgui.UIPackage.createObject("Package1", "comp_Card") as CardView;
+	}
+
+	/** 为 typeLoader 设置卡牌数字，随机黑桃/红心（供任意带 m_typeLoader 的卡牌组件复用） */
+	static setDigitalLoader(loader: fgui.GLoader, value: number): void {
+		const r = Math.random();
+		if (r < 0.5) {
+			loader.url = fgui.UIPackage.getItemURL("Package1", `spade_${value}`);
+		} else {
+			loader.url = fgui.UIPackage.getItemURL("Package1", `heart_${value}`);
+		}
+	}
+
+	setDigital(value: number) {
+		CardView.setDigitalLoader(this.m_typeLoader, value);
 	}
 
 	/** 从屏幕上方飘落到目标位置，带旋转，先快后慢 */

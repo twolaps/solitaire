@@ -8,6 +8,8 @@ export class CardView extends UI_comp_Card {
 	cfgKey: string;
 	/** 卡牌数字（1-13） */
 	value: number = 0;
+	/** 花色：spade 黑桃 / heart 红心 */
+	suit: "spade" | "heart" = "spade";
 	isClear: boolean = false;
 
 	public static createInstance(): CardView {
@@ -15,18 +17,17 @@ export class CardView extends UI_comp_Card {
 	}
 
 	/** 为 typeLoader 设置卡牌数字，随机黑桃/红心（供任意带 m_typeLoader 的卡牌组件复用） */
-	static setDigitalLoader(loader: fgui.GLoader, value: number): void {
-		const r = Math.random();
-		if (r < 0.5) {
-			loader.url = fgui.UIPackage.getItemURL("Package1", `spade_${value}`);
-		} else {
-			loader.url = fgui.UIPackage.getItemURL("Package1", `heart_${value}`);
+	static setDigitalLoader(loader: fgui.GLoader, value: number, suit?: "spade" | "heart"): void {
+		if (!suit) {
+			suit = Math.random() < 0.5 ? "spade" : "heart";
 		}
+		loader.url = fgui.UIPackage.getItemURL("Package1", `${suit}_${value}`);
 	}
 
-	setDigital(value: number) {
+	setDigital(value: number, suit?: "spade" | "heart") {
 		this.value = value;
-		CardView.setDigitalLoader(this.m_typeLoader, value);
+		this.suit = suit ?? (Math.random() < 0.5 ? "spade" : "heart");
+		CardView.setDigitalLoader(this.m_typeLoader, value, this.suit);
 	}
 
 	/** 从屏幕上方飘落到目标位置，带旋转，先快后慢 */
@@ -65,9 +66,15 @@ export class CardView extends UI_comp_Card {
 		const startX = this.x;
 		const startY = this.y;
 
-		const T = 0.9;
-		const vy0 = -450;
-		const g = 1400;
+		const T = 0.9; 
+		
+		// 调大这里的重力加速度 g。
+		// 建议设置为 2500 到 3000 之间。数值越大，抛物线的最高点越高，下落时的视觉力度也越大。
+		const g = 2800; 
+		
+		// 根据终点坐标和新重力，自动推导出更猛烈的初始上抛速度
+		const vy0 = (endY - startY - 0.5 * g * T * T) / T;
+		
 		const rotSpeed = 720;
 
 		const state = { t: 0 };
@@ -77,6 +84,7 @@ export class CardView extends UI_comp_Card {
 					const t = state.t * T;
 					const x = startX + (endX - startX) * state.t;
 					const y = startY + vy0 * t + 0.5 * g * t * t;
+					
 					const rotation = rotSpeed * t;
 					this.setPosition(x, y);
 					this.rotation = rotation;

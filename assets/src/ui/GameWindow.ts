@@ -15,6 +15,8 @@ export class GameWindow extends BaseWindow {
 	public cardMap: Map<string, CardView>;
 	public shuffleCardViews: CardView[] = [];
 	private handValue: number = 0;
+	private _titleJitterTween: { stop: () => void } | null = null;
+	private _isFirstEliminate = true;
 	protected onInit(): void {
 			// 创建 comp_Game 实例并设置为窗口内容
 			this.compGame = UI_comp_Game.createInstance();
@@ -73,6 +75,11 @@ export class GameWindow extends BaseWindow {
 	private playCardEliminate(cardView: CardView) {
 		this.contentPane.touchable = false;
 
+		if (this._isFirstEliminate) {
+			this._isFirstEliminate = false;
+			this.playTitleSlideOut();
+		}
+
 		const handCard = this.compGame.m_handCard;
 		const cardCon = this.compGame.m_cardCon;
 		const compGame = this.compGame;
@@ -91,6 +98,8 @@ export class GameWindow extends BaseWindow {
 		cardView.sortingOrder = 1000; // 确保飞行的卡牌显示在 handCard 上方，不被遮挡
 
 		cardView.playThrowToHand(endX, endY, () => {
+			this.handValue = cardView.value;
+			CardView.setDigitalLoader(handCard.m_typeLoader, this.handValue, cardView.suit);
 			cardView.isClear = true;
 			cardView.visible = false;
 			this.checkSide();
@@ -134,11 +143,34 @@ export class GameWindow extends BaseWindow {
 		const state = { y: baseY };
 		const updatePos = () => img.setPosition(centerX, state.y);
 
-		tween(state)
+		this._titleJitterTween = tween(state)
 			.to(0.3, { y: baseY + amplitude }, { easing: "sineInOut", onUpdate: updatePos })
 			.to(0.3, { y: baseY - amplitude }, { easing: "sineInOut", onUpdate: updatePos })
 			.union()
 			.repeatForever()
+			.start();
+	}
+
+	/** imgTitle 从中心向右飘出，与 SlideIn 完全对称 */
+	private playTitleSlideOut() {
+		this._titleJitterTween?.stop();
+		this._titleJitterTween = null;
+
+		const img = this.compGame.m_imgTitle;
+		const centerX = (this.compGame.width - img.width) / 2;
+		const endX = this.compGame.width;
+		const baseY = img.y;
+
+		img.setPosition(centerX, baseY);
+
+		const state = { x: centerX };
+		tween(state)
+			.to(0.5, { x: endX }, {
+				easing: "backIn",
+				onUpdate: () => {
+					img.setPosition(state.x, baseY);
+				}
+			})
 			.start();
 	}
 

@@ -1,3 +1,5 @@
+import { tween } from "cc";
+import * as fgui from "fairygui-cc";
 import { cardCfg } from "../config/CardConfig";
 import UI_comp_Game from "../fgui/Package1/UI_comp_Game";
 import { CardView } from "./components/CardView";
@@ -38,6 +40,47 @@ export class GameWindow extends BaseWindow {
 				index++;
 			}
 			this.checkSide();
+
+			// 卡牌入场动画结束后，imgTitle 从屏幕左侧移动到中间
+			const cardCount = index;
+			const cardAnimEndTime = (cardCount - 1) * 0.1 + 0.7;
+			this.playTitleSlideIn(cardAnimEndTime);
+		}
+
+		/** imgTitle 从屏幕左侧滑入到中间，到达后持续上下小幅度抖动 */
+		private playTitleSlideIn(delay: number) {
+			const img = this.compGame.m_imgTitle;
+			const startX = -img.width;
+			const centerX = (this.compGame.width - img.width) / 2;
+			const baseY = img.y;
+
+			img.setPosition(startX, baseY);
+
+			const state = { x: startX };
+			tween(state)
+				.delay(delay)
+				.to(0.5, { x: centerX }, {
+					easing: "backOut",
+					onUpdate: () => {
+						img.setPosition(state.x, baseY);
+					}
+				})
+				.call(() => this.playTitleJitter(img, centerX, baseY))
+				.start();
+		}
+
+		/** imgTitle 到达中心后持续的上下小幅度抖动 */
+		private playTitleJitter(img: fgui.GImage, centerX: number, baseY: number) {
+			const amplitude = 4;
+			const state = { y: baseY };
+			const updatePos = () => img.setPosition(centerX, state.y);
+
+			tween(state)
+				.to(0.3, { y: baseY + amplitude }, { easing: "sineInOut", onUpdate: updatePos })
+				.to(0.3, { y: baseY - amplitude }, { easing: "sineInOut", onUpdate: updatePos })
+				.union()
+				.repeatForever()
+				.start();
 		}
 
 		private checkSide() {
@@ -45,7 +88,7 @@ export class GameWindow extends BaseWindow {
 				const cfg = cardCfg[cfgKey];
 				// cover 为空：正面 (0)
 				if (!cfg.cover || cfg.cover.length === 0) {
-					cardView.m_ctrlSide.selectedIndex = 0;
+					cardView.setFront();
 					continue;
 				}
 				// cover 有值：仅当 cover 中所有牌都 isClear 才正面，否则反面
@@ -53,7 +96,12 @@ export class GameWindow extends BaseWindow {
 					const coverCard = this.cardMap.get(coverKey);
 					return coverCard ? coverCard.isClear : false;
 				});
-				cardView.m_ctrlSide.selectedIndex = allCoverCleared ? 0 : 1;
+
+				if (allCoverCleared) {
+					cardView.setFront();
+				} else {
+					cardView.setBack();
+				}
 			}
 		}
 }

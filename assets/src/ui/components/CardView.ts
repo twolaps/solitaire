@@ -4,12 +4,12 @@ import UI_comp_Card from "../../fgui/Package1/UI_comp_Card";
 
 export class CardView extends UI_comp_Card {
 
-		cfgKey: string;
-		isClear: boolean = false;
+	cfgKey: string;
+	isClear: boolean = false;
 
-    public static createInstance(): CardView {
-        return fgui.UIPackage.createObject("Package1", "comp_Card") as CardView;
-    }
+	public static createInstance(): CardView {
+			return fgui.UIPackage.createObject("Package1", "comp_Card") as CardView;
+	}
 
 	/** 从屏幕上方飘落到目标位置，带旋转，先快后慢 */
 	public playDropIn(endX: number, endY: number, delay: number = 0) {
@@ -30,5 +30,15 @@ export class CardView extends UI_comp_Card {
 				}
 			})
 			.start();
+	}
+
+	setFront() {
+		this.m_ctrlSide.selectedIndex = 0;
+		this.touchable = true;
+	}
+
+	setBack() {
+		this.m_ctrlSide.selectedIndex = 1;
+		this.touchable = false;
 	}
 }

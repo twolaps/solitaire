@@ -68,9 +68,8 @@ export class CardView extends UI_comp_Card {
 
 		const T = 0.9; 
 		
-		// 调大这里的重力加速度 g。
-		// 建议设置为 2500 到 3000 之间。数值越大，抛物线的最高点越高，下落时的视觉力度也越大。
-		const g = 2800; 
+		// 重力加速度 g。
+		const g = 4000; 
 		
 		// 根据终点坐标和新重力，自动推导出更猛烈的初始上抛速度
 		const vy0 = (endY - startY - 0.5 * g * T * T) / T;
@@ -94,8 +93,48 @@ export class CardView extends UI_comp_Card {
 			.start();
 	}
 
+	/** 反面翻到正面，并向右平移到目标位置；翻面过程中数值会提前显示 */
+	playFlipAndSlideToHand(endX: number, endY: number, onComplete?: () => void) {
+		const startX = this.x;
+		const startY = this.y;
+		const flipInDuration = 0.1;   // 反面收拢
+		const flipOutDuration = 0.15; // 正面展开（此时数值可见）
+		const slideDuration = 0.25;
+
+		const state = { scaleX: 1, x: startX, y: startY };
+		tween(state)
+			.to(flipInDuration, { scaleX: 0 }, {
+				easing: "sineIn",
+				onUpdate: () => {
+					this.scaleX = state.scaleX;
+					this.setPosition(state.x, state.y);
+				}
+			})
+			.call(() => {
+				this.setFront(); // 切换为正面，展开时即可看到数值
+			})
+			.to(flipOutDuration, { scaleX: 1 }, {
+				easing: "backOut",
+				onUpdate: () => {
+					this.scaleX = state.scaleX;
+					this.setPosition(state.x, state.y);
+				}
+			})
+			.to(slideDuration, { x: endX, y: endY }, {
+				easing: "sineInOut",
+				onUpdate: () => {
+					this.setPosition(state.x, state.y);
+				}
+			})
+			.call(() => {
+				this.scaleX = 1;
+				onComplete?.();
+			})
+			.start();
+	}
+
 	/** 旋转式轻微摇晃（点击不能消除时播放） */
-	playShake() {
+	playShake(onComplete?: () => void) {
 		const baseRotation = this.rotation;
 		const amplitude = 8;
 		const duration = 0.04;
@@ -106,6 +145,7 @@ export class CardView extends UI_comp_Card {
 			.to(duration * 2, { rotation: baseRotation + amplitude }, { easing: "sineInOut", onUpdate: () => this.rotation = state.rotation })
 			.to(duration * 2, { rotation: baseRotation - amplitude }, { easing: "sineInOut", onUpdate: () => this.rotation = state.rotation })
 			.to(duration, { rotation: baseRotation }, { easing: "sineInOut", onUpdate: () => this.rotation = state.rotation })
+			.call(() => onComplete?.())
 			.start();
 	}
 }

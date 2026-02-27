@@ -1,9 +1,10 @@
-import './fgui-global';
 import { _decorator, Component } from 'cc';
-import { GRoot } from 'fairygui-cc';
+import * as fgui from 'fairygui-cc';
 import { UIManager } from './manager/UIManager';
 import Package1Binder from './fgui/Package1/Package1Binder';
-import UI_comp_Game from './fgui/Package1/UI_comp_Game';
+import UI_comp_Card from './fgui/Package1/UI_comp_Card';
+import { CardView } from './ui/components/CardView';
+import { GameWindow } from './ui/GameWindow';
 
 const { ccclass } = _decorator;
 
@@ -19,7 +20,9 @@ export class Main extends Component {
             await UIManager.inst.loadPackage("Package1");
             // 3. 绑定 comp_Game 等组件类
             Package1Binder.bindAll();
-            
+            // 4. 用 CardView 替换 comp_Card 的默认实现
+            fgui.UIObjectFactory.setExtension(UI_comp_Card.URL, CardView);
+
             this.enterGame();
         } catch (e) {
             console.error("启动失败", e);
@@ -27,8 +30,7 @@ export class Main extends Component {
     }
 
     enterGame() {
-        // 创建 comp_Game 界面并添加到根节点显示
-        const comp = UI_comp_Game.createInstance();
-        GRoot.inst.addChild(comp);
+			const gameWin = new GameWindow();
+    	gameWin.show();
     }
 }

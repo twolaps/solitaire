@@ -28,6 +28,8 @@ export class GameWindow extends BaseWindow {
 	private _gameSuccess = false;
 	/** 有牌可消除时每 5 秒提示晃动的定时器，正确消除或 shuffle 后清除 */
 	private _hintShakeTimerId: ReturnType<typeof setTimeout> | null = null;
+	/** 首次消除引导时指向的那张可消除牌，点击消除后置空并关闭引导 */
+	private _firstGuideCardView: CardView | null = null;
 	protected onInit(): void {
 			// 创建 comp_Game 实例并设置为窗口内容
 			this.compGame = UI_comp_Game.createInstance();
@@ -47,6 +49,8 @@ export class GameWindow extends BaseWindow {
 		this.compGame.m_btnDownload.visible = false;
 		this.compGame.m_compArrow.m_move.stop();
 		this.compGame.m_compArrow.visible = false;
+		this.compGame.m_mask.visible = false;
+
 		this.updateBgVisibility();
 		if (!sys.isMobile) {
 			// Web 端 screen.on('window-resize') 有 bug 只触发一次，改用原生 resize
@@ -153,7 +157,6 @@ export class GameWindow extends BaseWindow {
 
 	private showCard() {
 		this.contentPane.touchable = false;
-
 		this.cardMap = new Map<string, CardView>();
 		this.initHandCards();
 		this.initShuffleCards();
@@ -179,7 +182,12 @@ export class GameWindow extends BaseWindow {
 		this.playTitleSlideIn(cardAnimEndTime);
 		tween({}).delay(cardAnimEndTime).call(() => {
 			this.contentPane.touchable = true;
-			this.startHintShakeTimerIfNeeded();
+			const guideCard = this.getOneEliminableCard();
+			if (guideCard) {
+				this.showFirstEliminateGuide(guideCard);
+			} else {
+				this.startHintShakeTimerIfNeeded();
+			}
 		}).start();
 	}
 
@@ -229,6 +237,10 @@ export class GameWindow extends BaseWindow {
 	private playCardEliminate(cardView: CardView) {
 		this.contentPane.touchable = false;
 		this.stopHintShakeTimer();
+		if (cardView === this._firstGuideCardView) {
+			this.dismissFirstEliminateGuide();
+			this._firstGuideCardView = null;
+		}
 
 		if (this._isFirstEliminate) {
 			this._isFirstEliminate = false;
@@ -239,15 +251,20 @@ export class GameWindow extends BaseWindow {
 		const cardCon = this.compGame.m_cardCon;
 		const compGame = this.compGame;
 
-		// 将卡牌移到 compGame 根容器，避免 cardCon 裁剪导致飞行动画途中突然消失
-		const cardGlobalStart = cardCon.localToGlobal(cardView.x, cardView.y);
-		const startInRoot = compGame.globalToLocal(cardGlobalStart.x, cardGlobalStart.y);
+		let startInRoot: { x: number; y: number };
+		if (cardView.parent === compGame) {
+			startInRoot = { x: cardView.x, y: cardView.y };
+		} else {
+			const cardGlobalStart = cardCon.localToGlobal(cardView.x, cardView.y);
+			startInRoot = compGame.globalToLocal(cardGlobalStart.x, cardGlobalStart.y);
+		}
 		const handCenterGlobal = handCard.localToGlobal(handCard.width / 2, handCard.height / 2);
 		const endInRoot = compGame.globalToLocal(handCenterGlobal.x, handCenterGlobal.y);
 		const endX = endInRoot.x - cardView.width / 2;
 		const endY = endInRoot.y - cardView.height / 2;
 
-		cardCon.removeChild(cardView);
+		const parent = cardView.parent;
+		if (parent) parent.removeChild(cardView);
 		compGame.addChild(cardView);
 		cardView.setPosition(startInRoot.x, startInRoot.y);
 		cardView.sortingOrder = 1000; // 确保飞行的卡牌显示在 handCard 上方，不被遮挡
@@ -433,6 +450,38 @@ export class GameWindow extends BaseWindow {
 			.start();
 	}
 
+	/** 首次消除新手引导：显示 mask，将一张可消除牌提到 mask 上方，显示箭头指向该牌并播放动画 */
+	private showFirstEliminateGuide(cardView: CardView) {
+		const compGame = this.compGame;
+		const cardCon = this.compGame.m_cardCon;
+		compGame.m_mask.visible = true;
+		const cardGlobal = cardCon.localToGlobal(cardView.x, cardView.y);
+		const inComp = compGame.globalToLocal(cardGlobal.x, cardGlobal.y);
+		cardCon.removeChild(cardView);
+		const maskIndex = compGame.getChildIndex(compGame.m_mask);
+		compGame.addChildAt(cardView, maskIndex + 1);
+		cardView.setPosition(inComp.x, inComp.y);
+		this._firstGuideCardView = cardView;
+		this.showCompArrowAboveCard(cardView);
+	}
+
+	/** 关闭首次消除引导：隐藏 mask、隐藏箭头并停止动画 */
+	private dismissFirstEliminateGuide() {
+		this.compGame.m_mask.visible = false;
+		this.hideCompArrow();
+	}
+
+	/** 将 compArrow 定位到指定卡牌（已在 compGame 内）上方并显示、播放 move 动画 */
+	private showCompArrowAboveCard(cardView: CardView) {
+		const arrow = this.compGame.m_compArrow;
+		const gap = 30;
+		const centerX = cardView.x
+		const arrowY = cardView.y - arrow.height - gap;
+		arrow.setPosition(centerX - arrow.width / 2, arrowY);
+		arrow.visible = true;
+		arrow.m_move.play(null, -1, 0);
+	}
+
 	/** 将 compArrow 定位到 shuffle 卡牌上方并显示、播放 move 动画（以最右边一张牌为标记位置） */
 	private showCompArrowAboveShuffle() {
 		if (this.shuffleCardViews.length === 0) return;
@@ -469,7 +518,7 @@ export class GameWindow extends BaseWindow {
 	/** 若有可消除牌则启动 5 秒提示计时，到点后晃动一张可消除牌（不播 error 音效），并每 5 秒重复直到正确消除或 shuffle */
 	private startHintShakeTimerIfNeeded() {
 		this.stopHintShakeTimer();
-		if (this._gameSuccess || this.isNoEliminableCard()) return;
+		if (this._gameSuccess || this.isNoEliminableCard() || this._firstGuideCardView != null) return;
 		this._hintShakeTimerId = setTimeout(() => this.onHintShakeTick(), 5000);
 	}
 

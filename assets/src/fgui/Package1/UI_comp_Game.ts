@@ -15,10 +15,11 @@ export default class UI_comp_Game extends fgui.GComponent {
 	public m_cardCon:fgui.GComponent;
 	public m_handCard:UI_comp_Card;
 	public m_shuffleArea:UI_comp_Shuffle;
-	public m_imgTitle:fgui.GLoader;
 	public m_btnDownload:fgui.GLoader;
 	public m_comStart:UI_comp_Start;
+	public m_mask:fgui.GGraph;
 	public m_compArrow:UI_comp_Arrow;
+	public m_imgTitle:fgui.GLoader;
 	public static URL:string = "ui://1yx7aoelt01j2";
 
 	public static createInstance():UI_comp_Game {
@@ -33,9 +34,10 @@ export default class UI_comp_Game extends fgui.GComponent {
 		this.m_cardCon = <fgui.GComponent>(this.getChild("cardCon"));
 		this.m_handCard = <UI_comp_Card>(this.getChild("handCard"));
 		this.m_shuffleArea = <UI_comp_Shuffle>(this.getChild("shuffleArea"));
-		this.m_imgTitle = <fgui.GLoader>(this.getChild("imgTitle"));
 		this.m_btnDownload = <fgui.GLoader>(this.getChild("btnDownload"));
 		this.m_comStart = <UI_comp_Start>(this.getChild("comStart"));
+		this.m_mask = <fgui.GGraph>(this.getChild("mask"));
 		this.m_compArrow = <UI_comp_Arrow>(this.getChild("compArrow"));
+		this.m_imgTitle = <fgui.GLoader>(this.getChild("imgTitle"));
 	}
 }

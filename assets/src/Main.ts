@@ -9,54 +9,53 @@ import { AudioManager } from './manager/AudioManager';
 
 const { ccclass, property } = _decorator;
 
+/**
+ * 游戏入口：挂载在场景根节点，负责分辨率适配、FGUI 初始化、资源加载、进入游戏
+ */
 @ccclass('Main')
 export class Main extends Component {
-    
-		@property(AudioClip)
-		public bgmClip: AudioClip = null!;
+	/** 背景音乐片段，在编辑器中绑定 */
+	@property(AudioClip)
+	public bgmClip: AudioClip = null!;
 
-    async onLoad() {
-				this.fitScreen();
-        // 1. 初始化 FGUI 根节点
-        UIManager.inst.initRoot();
-				AudioManager.inst;
-				AudioManager.inst.playMusic(this.bgmClip);
+	async onLoad() {
+		this.fitScreen();
+		UIManager.inst.initRoot();
+		AudioManager.inst;
+		AudioManager.inst.playMusic(this.bgmClip);
 
-        try {
-            // 2. 加载 Package1 资源包（路径：resources/fgui/Package1）
-            await UIManager.inst.loadPackage("Package1");
-            // 3. 绑定 comp_Game 等组件类
-            Package1Binder.bindAll();
-            // 4. 用 CardView 替换 comp_Card 的默认实现
-            fgui.UIObjectFactory.setExtension(UI_comp_Card.URL, CardView);
+		try {
+			await UIManager.inst.loadPackage("Package1");
+			Package1Binder.bindAll();
+			// 用 CardView 替换 comp_Card 的默认实例化，以便使用自定义动画与逻辑
+			fgui.UIObjectFactory.setExtension(UI_comp_Card.URL, CardView);
 
-            this.enterGame();
-        } catch (e) {
-            console.error("启动失败", e);
-        }
-    }
-
-		fitScreen() {
-			// 动态适配逻辑
-			let designSize = view.getDesignResolutionSize();
-			let frameSize = screen.windowSize;
-
-			// 计算当前屏幕的宽高比
-			let designRatio = designSize.width / designSize.height;
-			let frameRatio = frameSize.width / frameSize.height;
-
-			if (frameRatio > designRatio) {
-					// 屏幕更宽（如 PC 宽屏）：固定高度，宽度自适应
-					view.setResolutionPolicy(ResolutionPolicy.FIXED_HEIGHT);
-			} else {
-					// 屏幕更窄（如 手机长屏）：固定宽度，高度自适应
-					view.setResolutionPolicy(ResolutionPolicy.FIXED_WIDTH);
-			}
+			this.enterGame();
+		} catch (e) {
+			console.error("启动失败", e);
 		}
+	}
 
+	/**
+	 * 根据设计分辨率与当前窗口比例选择适配策略：宽屏固定高度，窄屏固定宽度
+	 */
+	fitScreen() {
+		let designSize = view.getDesignResolutionSize();
+		let frameSize = screen.windowSize;
 
-    enterGame() {
-			const gameWin = new GameWindow();
-    	gameWin.show();
-    }
+		let designRatio = designSize.width / designSize.height;
+		let frameRatio = frameSize.width / frameSize.height;
+
+		if (frameRatio > designRatio) {
+			view.setResolutionPolicy(ResolutionPolicy.FIXED_HEIGHT);
+		} else {
+			view.setResolutionPolicy(ResolutionPolicy.FIXED_WIDTH);
+		}
+	}
+
+	/** 创建并显示游戏主窗口 */
+	enterGame() {
+		const gameWin = new GameWindow();
+		gameWin.show();
+	}
 }

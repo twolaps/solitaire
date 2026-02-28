@@ -2,24 +2,28 @@ import { _decorator, AudioSource, Node, director, AudioClip, assetManager, sys }
 import { GRoot, UIPackage } from 'fairygui-cc';
 
 /**
- * 音频管理器
+ * 音频管理器：单例，负责 BGM、音效播放与音量持久化；并接管 FairyGUI 按钮音效
  */
 export class AudioManager {
     private static _instance: AudioManager;
 
-    private _musicSource: AudioSource = null!; // 专门播 BGM
-    private _sfxSource: AudioSource = null!;   // 专门播音效 (playOneShot)
+    /** 专门播 BGM 的 AudioSource */
+    private _musicSource: AudioSource = null!;
+    /** 专门播音效的 AudioSource（playOneShot） */
+    private _sfxSource: AudioSource = null!;
 
+    /** 当前 BGM 音量，会持久化 */
     private _musicVolume: number = 0.8;
+    /** 当前音效音量，会持久化 */
     private _sfxVolume: number = 1.0;
 
-    /** 音效资源缓存，避免重复加载 */
+    /** 音效资源缓存（按路径），避免重复加载 */
     private _effectCache: Map<string, AudioClip> = new Map();
 
-    // 本地存储的 Key
     private readonly KEY_MUSIC_VOL = 'SAVE_MUSIC_VOL';
     private readonly KEY_SFX_VOL = 'SAVE_SFX_VOL';
 
+    /** 单例访问 */
     public static get inst(): AudioManager {
         if (!this._instance) this._instance = new AudioManager();
         return this._instance;
@@ -88,7 +92,10 @@ export class AudioManager {
 
     /**
      * 通过包名 + 组件名播放 FUI 音效 (例如 pkgName="Package1", itemName="SoundClick")
-     * @param loopCount 填大于 0 的整数为播放次数，默认 1；填 0 为无限循环
+     * @param pkgName FairyGUI 包名
+     * @param itemName 资源名（如音效名）
+     * @param volumeScale 音量缩放，默认 1
+     * @param loopCount 播放次数：>0 为次数，默认 1；0 为无限循环
      */
     public playSFXByName(pkgName: string, itemName: string, volumeScale: number = 1, loopCount: number = 1) {
         const url = UIPackage.getItemURL(pkgName, itemName);

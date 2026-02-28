@@ -1,8 +1,20 @@
+/**
+ * 手牌与主牌布局配置
+ */
+
 /** 手牌配置：手牌上显示的数字（1-13） */
 export const handCardCfg = {
+	/** 游戏开始时手牌显示的初始点数 */
 	initialValue: 6,
 };
 
+/**
+ * 主牌布局配置：key 为卡牌 id（如 card1），value 为牌面与位置、覆盖关系
+ * - id: 序号
+ * - value: 牌面数字 1-13
+ * - pos: [x, y] 在牌桌中的目标坐标
+ * - cover: 覆盖当前牌的卡牌 key 数组，空表示无牌压住（正面朝上）
+ */
 export const cardCfg: Object = {
   "card1": {"id": 1, "value": 13, "pos":[358, 72], "cover": ["card2","card3"]},
   "card2": {"id": 2, "value": 7, "pos":[308, 144], "cover": ["card4","card5"]},
@@ -25,4 +37,4 @@ export const cardCfg: Object = {
   "card19": {"id": 19, "value": 2, "pos":[408, 432], "cover": []},
   "card20": {"id": 20, "value": 4, "pos":[508, 432], "cover": []},
   "card21": {"id": 21, "value": 5, "pos":[608, 432], "cover": []}
-}
+};

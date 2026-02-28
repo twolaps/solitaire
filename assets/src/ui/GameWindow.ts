@@ -4,47 +4,59 @@ import { cardCfg, handCardCfg } from "../config/CardConfig";
 import UI_comp_Game from "../fgui/Package1/UI_comp_Game";
 import { CardView } from "./components/CardView";
 import { BaseWindow } from "../manager/BaseWindow";
-import UI_comp_Shuffle from "../fgui/Package1/UI_comp_Shuffle";
 import { AudioManager } from "../manager/AudioManager";
+import { GameState } from "../game/GameState";
+import { GameConfig } from "../config/GameConfig";
+import { checkSide } from "../game/BoardLayout";
+import type { CardLayoutCfg } from "../game/BoardLayout";
+import { GameGuide } from "./game/GameGuide";
+import { TitleAnimator } from "./game/TitleAnimator";
+import { StartScreenAnimator } from "./game/StartScreenAnimator";
 
 /**
- * 绑定 comp_Game 组件的窗口
+ * 游戏主窗口：绑定 comp_Game 组件，负责组装游戏 UI 与各子模块（状态、引导、动画）
+ * 生命周期：onInit -> onShown -> [用户操作] -> onHide，在 onHide 中统一清理事件与定时器
  */
 export class GameWindow extends BaseWindow {
-	/** comp_Game 组件引用，可在 onShown 后访问子控件 */
-	public compGame: UI_comp_Game;
-	public cardMap: Map<string, CardView>;
+	/** 主游戏 UI 根组件（FairyGUI 导出的 comp_Game），可访问牌桌、手牌、洗牌区、标题等 */
+	public compGame!: UI_comp_Game;
+	/** 主牌 key（如 card1）-> CardView 的映射，用于点击判定与正反面更新 */
+	public cardMap!: Map<string, CardView>;
+	/** 洗牌区卡牌数组，最后一张为当前可点击的 top 牌 */
 	public shuffleCardViews: CardView[] = [];
-	private handValue: number = 0;
-	private _titleJitterTween: { stop: () => void } | null = null;
-	private _btnDownloadScaleTween: { stop: () => void } | null = null;
-	private _startCardScaleTween: { stop: () => void } | null = null;
-	private _imgFingerSwayTween: { stop: () => void } | null = null;
-	private _isFirstEliminate = true;
-	/** 连续 shuffle 导致僵局的次数，达到 2 时下一次 shuffle 必定可消除 */
-	private _consecutiveShuffleDeadlockCount = 0;
-	/** 第一次点击时开始计时 */
-	private _gameStartTime: number | null = null;
-	private _gameSuccess = false;
-	/** 有牌可消除时每 5 秒提示晃动的定时器，正确消除或 shuffle 后清除 */
-	private _hintShakeTimerId: ReturnType<typeof setTimeout> | null = null;
-	/** 首次消除引导时指向的那张可消除牌，点击消除后置空并关闭引导 */
-	private _firstGuideCardView: CardView | null = null;
-	protected onInit(): void {
-			// 创建 comp_Game 实例并设置为窗口内容
-			this.compGame = UI_comp_Game.createInstance();
-			this.contentPane = this.compGame;
-			// 让内容铺满窗口显示区域（适配不同分辨率）
-			this.compGame.makeFullScreen();
-	}
 
-	/** 用于 window resize 的回调绑定，便于 removeEventListener */
-	private _boundOnWindowResize = () => this.onWindowResize();
-	/** 用于开始界面的全屏点击 */
-	private _boundOnStartScreenClick = () => this.onStartScreenClick();
+	/** 游戏状态与规则（手牌值、消除判定、僵局、胜利） */
+	private _gameState!: GameState;
+	/** 引导与提示（首次消除引导、箭头、5秒晃动计时） */
+	private _guide!: GameGuide;
+	/** 标题滑入滑出与抖动 */
+	private _titleAnimator!: TitleAnimator;
+	/** 开始界面与下载按钮的循环/入场动画 */
+	private _startScreenAnimator!: StartScreenAnimator;
+
+	/** 窗口 resize 回调（绑定 this，便于 removeEventListener） */
+	private _onResize = () => this.onWindowResize();
+	/** 开始界面全屏点击回调（点击后开始游戏） */
+	private _onStartClick = () => this.onStartScreenClick();
+
+	/** 窗口已隐藏时置为 true，延迟回调中检查以避免在隐藏后继续执行逻辑 */
+	private _hidden = false;
+
+	protected onInit(): void {
+		this.compGame = UI_comp_Game.createInstance();
+		this.contentPane = this.compGame;
+		this.compGame.makeFullScreen();
+
+		this._gameState = new GameState();
+		this._guide = new GameGuide(this.compGame);
+		this._titleAnimator = new TitleAnimator(this.compGame);
+		this._startScreenAnimator = new StartScreenAnimator(this.compGame);
+	}
 
 	protected onShown(): void {
 		super.onShown();
+		this._hidden = false;
+		// 初始隐藏标题、下载按钮、箭头、遮罩
 		this.compGame.m_imgTitle.visible = false;
 		this.compGame.m_btnDownload.visible = false;
 		this.compGame.m_compArrow.m_move.stop();
@@ -52,31 +64,28 @@ export class GameWindow extends BaseWindow {
 		this.compGame.m_mask.visible = false;
 
 		this.updateBgVisibility();
+		// 非移动端监听 resize，Web 用 window，其它用 screen
 		if (!sys.isMobile) {
-			// Web 端 screen.on('window-resize') 有 bug 只触发一次，改用原生 resize
-			if (sys.isBrowser && typeof window !== 'undefined') {
-				window.addEventListener('resize', this._boundOnWindowResize);
+			if (sys.isBrowser && typeof window !== "undefined") {
+				window.addEventListener("resize", this._onResize);
 			} else {
-				screen.on('window-resize', this.onWindowResize, this);
+				screen.on("window-resize", this.onWindowResize, this);
 			}
 		}
 
+		// 显示开始界面：红心 1 牌 + 呼吸与手指摆动，全屏点击进入游戏
 		this.compGame.m_comStart.visible = true;
 		this.compGame.m_comStart.m_startCard.m_typeLoader.url =
 			fgui.UIPackage.getItemURL("Package1", "heart_1");
-		this.playStartCardScaleLoop();
-		this.playImgFingerSwayLoop();
-		this.contentPane.on(fgui.Event.CLICK, this._boundOnStartScreenClick, this);
+		this._startScreenAnimator.playStartCardLoop();
+		this._startScreenAnimator.playFingerSwayLoop();
+		this.contentPane.on(fgui.Event.CLICK, this._onStartClick, this);
 	}
 
-	/** 开始界面点击：停止手指动画并隐藏、m_comStart 飞出、然后 startGame */
-	private onStartScreenClick() {
-		this.contentPane.off(fgui.Event.CLICK, this._boundOnStartScreenClick, this);
-
-		this._startCardScaleTween?.stop();
-		this._startCardScaleTween = null;
-		this._imgFingerSwayTween?.stop();
-		this._imgFingerSwayTween = null;
+	/** 开始界面点击：移除点击监听、停止动画、开始界面向上飞出后调用 startGame */
+	private onStartScreenClick(): void {
+		this.contentPane.off(fgui.Event.CLICK, this._onStartClick, this);
+		this._startScreenAnimator.stopAll();
 		this.compGame.m_comStart.m_imgFinger.visible = false;
 
 		const comStart = this.compGame.m_comStart;
@@ -89,18 +98,16 @@ export class GameWindow extends BaseWindow {
 				easing: "backIn",
 				onUpdate: () => {
 					comStart.y = state.y;
-				}
+				},
 			})
 			.call(() => this.startGame())
 			.start();
 	}
 
-	private startGame() {
-		this._startCardScaleTween?.stop();
-		this._startCardScaleTween = null;
-		this._imgFingerSwayTween?.stop();
-		this._imgFingerSwayTween = null;
-		this.contentPane.off(fgui.Event.CLICK, this._boundOnStartScreenClick, this);
+	/** 点击后正式开始：隐藏开始界面、发牌、绑定下载按钮点击 */
+	private startGame(): void {
+		this._startScreenAnimator.stopAll();
+		this.contentPane.off(fgui.Event.CLICK, this._onStartClick, this);
 		this.compGame.m_comStart.visible = false;
 		this.compGame.m_comStart.m_imgFinger.visible = true;
 		this.compGame.m_comStart.y = 0;
@@ -108,41 +115,52 @@ export class GameWindow extends BaseWindow {
 		this.compGame.m_btnDownload.on(fgui.Event.CLICK, this.onBtnDownloadClick, this);
 	}
 
-
-
 	protected onHide(): void {
 		super.onHide();
-		this.stopHintShakeTimer();
-		this.contentPane.off(fgui.Event.CLICK, this._boundOnStartScreenClick, this);
-		this._startCardScaleTween?.stop();
-		this._startCardScaleTween = null;
-		this._imgFingerSwayTween?.stop();
-		this._imgFingerSwayTween = null;
+		this._hidden = true;
+		this._guide.stopHintTimer();
+		this._titleAnimator.stopJitter();
+		this.contentPane.off(fgui.Event.CLICK, this._onStartClick, this);
+		this.compGame.m_btnDownload.off(fgui.Event.CLICK, this.onBtnDownloadClick, this);
+		// 移除主牌与洗牌区每张牌的点击监听
+		if (this.cardMap) {
+			for (const [, cardView] of this.cardMap) {
+				cardView.off(fgui.Event.CLICK, this.onCardClick, this);
+			}
+		}
+		for (const card of this.shuffleCardViews) {
+			card.off(fgui.Event.CLICK, this.onShuffleCardClick, this);
+		}
+		this._startScreenAnimator.stopAll();
 		if (!sys.isMobile) {
-			if (sys.isBrowser && typeof window !== 'undefined') {
-				window.removeEventListener('resize', this._boundOnWindowResize);
+			if (sys.isBrowser && typeof window !== "undefined") {
+				window.removeEventListener("resize", this._onResize);
 			} else {
-				screen.off('window-resize', this.onWindowResize, this);
+				screen.off("window-resize", this.onWindowResize, this);
 			}
 		}
 	}
 
-	private onWindowResize() {
+	/** 窗口尺寸变化时根据宽高比更新背景显示（竖屏/横屏） */
+	private onWindowResize(): void {
 		this.updateBgVisibility();
 	}
 
-	/** 获取当前可见区域尺寸（Web 端 screen.windowSize 不随 resize 更新，需用 window 或 view） */
+	/**
+	 * 获取当前可见区域尺寸（Web 端 screen.windowSize 可能不随 resize 更新）
+	 * @returns { width, height }
+	 */
 	private getViewportSize(): { width: number; height: number } {
-		if (sys.isBrowser && typeof window !== 'undefined') {
+		if (sys.isBrowser && typeof window !== "undefined") {
 			return { width: window.innerWidth, height: window.innerHeight };
 		}
 		return screen.windowSize;
 	}
 
-	/** 根据屏幕宽高比切换 bg/bg2：高/宽 >= 1280/720 为竖屏显示 bg，否则横屏显示 bg2；两者始终水平居中 */
-	private updateBgVisibility() {
+	/** 根据屏幕宽高比切换 bg（竖屏）/ bg2（横屏），并水平居中 */
+	private updateBgVisibility(): void {
 		const { width, height } = this.getViewportSize();
-		const isLandscape = height / width < 1280 / 720;
+		const isLandscape = height / width < GameConfig.PORTRAIT_ASPECT;
 		this.compGame.m_bg.visible = !isLandscape;
 		this.compGame.m_bg2.visible = isLandscape;
 
@@ -151,11 +169,16 @@ export class GameWindow extends BaseWindow {
 		this.compGame.m_bg2.setPosition((parentW - this.compGame.m_bg2.width) / 2, this.compGame.m_bg2.y);
 	}
 
-	private onBtnDownloadClick(event: fgui.Event) {
+	/** 下载按钮点击（当前仅打 log，可扩展为跳转商店等） */
+	private onBtnDownloadClick(_event: fgui.Event): void {
 		console.log("点击下载");
 	}
 
-	private showCard() {
+	/**
+	 * 发牌：按配置创建主牌并飘落、初始化手牌与洗牌区、播发牌音效；
+	 * 根据 cover 更新正反面；入场动画结束后滑入标题，若有可消除牌则显示首次引导或启动提示计时
+	 */
+	private showCard(): void {
 		this.contentPane.touchable = false;
 		this.cardMap = new Map<string, CardView>();
 		this.initHandCards();
@@ -164,93 +187,101 @@ export class GameWindow extends BaseWindow {
 		let index = 0;
 		for (const key in cardCfg) {
 			const cfg = cardCfg[key];
-			const cardView: CardView = CardView.createInstance();
+			const cardView = CardView.createInstance();
 			cardView.setDigital(cfg.value);
 			this.cardMap.set(key, cardView);
 			cardView.cfgKey = key;
 			cardView.on(fgui.Event.CLICK, this.onCardClick, this);
 			this.compGame.m_cardCon.addChild(cardView);
-			// 起始位置在上方，通过动画飘落到目标位置
 			cardView.playDropIn(cfg.pos[0], cfg.pos[1], index * 0.1);
 			index++;
-		} 
+		}
 		AudioManager.inst.playSFXByName("Package1", "deal", 1, 2);
-		this.checkSide();
-		// 卡牌入场动画结束后，imgTitle 从屏幕左侧移动到中间，并允许全屏点击
+		checkSide(this.cardMap, cardCfg as Record<string, CardLayoutCfg>);
+
+		// 最后一张牌入场结束时间 = (n-1)*0.1 + 0.7
 		const cardCount = index;
 		const cardAnimEndTime = (cardCount - 1) * 0.1 + 0.7;
-		this.playTitleSlideIn(cardAnimEndTime);
+		this._titleAnimator.playTitleSlideIn(cardAnimEndTime);
 		tween({}).delay(cardAnimEndTime).call(() => {
+			if (this._hidden) return;
 			this.contentPane.touchable = true;
-			const guideCard = this.getOneEliminableCard();
+			const guideCard = this._gameState.getOneEliminable(this.cardMap);
 			if (guideCard) {
-				this.showFirstEliminateGuide(guideCard);
+				this._guide.showFirstGuide(guideCard);
 			} else {
-				this.startHintShakeTimerIfNeeded();
+				this.startHintTimer();
 			}
 		}).start();
 	}
 
-	private onCardClick(event: fgui.Event) {
-		if (this._gameSuccess) return;
-		if (this._gameStartTime === null) this._gameStartTime = Date.now();
+	/**
+	 * 主牌点击：若已过关或未开始计时则忽略；若与手牌相邻则消除并飞向手牌，否则播错误音效并晃动
+	 */
+	private onCardClick(event: fgui.Event): void {
+		if (this._gameState.gameSuccess) return;
+		if (this._gameState.gameStartTime === null) this._gameState.gameStartTime = Date.now();
 
-		const cardView: CardView = event.sender as CardView;
-		//可以消除
-		if (Math.abs(cardView.value - this.handValue) === 1 ||
-			(cardView.value === 1 && this.handValue === 13) ||
-			(cardView.value === 13 && this.handValue === 1)) {
-
+		const cardView = event.sender as CardView;
+		if (this._gameState.canEliminate(cardView.value)) {
 			this.playCardEliminate(cardView);
 			AudioManager.inst.playSFXByName("Package1", "move");
-		}
-		//不能消除
-		else {
+		} else {
 			this.contentPane.touchable = false;
 			AudioManager.inst.playSFXByName("Package1", "error");
 			cardView.playShake(() => {
-				this.contentPane.touchable = true;
+				if (!this._hidden) this.contentPane.touchable = true;
 			});
 		}
 	}
 
-	private onShuffleCardClick(event: fgui.Event) {
-		if (this._gameSuccess) return;
-		if (this._gameStartTime === null) this._gameStartTime = Date.now();
+	/**
+	 * 洗牌区点击：仅最上面一张可点；若连续僵局达到阈值则保证下一张必可消除（改牌面）；然后执行洗牌到手牌动画
+	 */
+	private onShuffleCardClick(event: fgui.Event): void {
+		if (this._gameState.gameSuccess) return;
+		if (this._gameState.gameStartTime === null) this._gameState.gameStartTime = Date.now();
 
 		const cardView = event.sender as CardView;
-		// 仅最上面一张（数组最后一个）可点击
 		if (this.shuffleCardViews.length === 0 || cardView !== this.shuffleCardViews[this.shuffleCardViews.length - 1]) {
 			return;
 		}
-		// 连续 2 次 shuffle 僵局后，下一次 shuffle 必定可消除
-		if (this._consecutiveShuffleDeadlockCount >= 2) {
-			const guaranteedValue = this.getGuaranteedEliminableHandValue();
+		if (this._gameState.shuffleDeadlockCount >= GameConfig.DEADLOCK_THRESHOLD) {
+			const guaranteedValue = this._gameState.getGuaranteedHandValue(this.cardMap);
 			if (guaranteedValue != null) {
 				cardView.setDigital(guaranteedValue);
 			}
 		}
-		this.playShuffleCardToHand(cardView);
+		this.playShuffleToHand(cardView);
 	}
 
-	/** 播放卡牌消除动画：抛物线飞到 handCard，结束后隐藏并刷新布局 */
-	private playCardEliminate(cardView: CardView) {
+	/**
+	 * 播放主牌消除动画：牌抛物线飞向手牌，结束后更新手牌值、标记已消除、刷新正反面；
+	 * 若全部消除或时间到则过关；否则若僵局则切到洗牌引导并滑入标题，最后恢复点击与提示计时
+	 * @param cardView 被点击消除的那张主牌
+	 */
+	private playCardEliminate(cardView: CardView): void {
 		this.contentPane.touchable = false;
-		this.stopHintShakeTimer();
-		if (cardView === this._firstGuideCardView) {
-			this.dismissFirstEliminateGuide();
-			this._firstGuideCardView = null;
+		this._guide.stopHintTimer();
+		if (cardView === this._guide.getGuideCard()) {
+			this._guide.dismissFirstGuide();
 		}
 
-		if (this._isFirstEliminate) {
-			this._isFirstEliminate = false;
-			this.playTitleSlideOut();
+		// 首次消除时滑出标题并隐藏首次引导
+		if (this._gameState.isFirstEliminate) {
+			this._gameState.isFirstEliminate = false;
+			this._titleAnimator.playTitleSlideOut(() => {
+				this.compGame.m_ctrlGuide.selectedIndex = 0;
+				this.compGame.m_imgTitle.visible = false;
+				this._guide.hideCompArrow();
+			});
 		}
 
 		const handCard = this.compGame.m_handCard;
 		const cardCon = this.compGame.m_cardCon;
 		const compGame = this.compGame;
 
+		// 计算牌当前在 compGame 下的坐标（可能在 cardCon 或已在 compGame）
 		let startInRoot: { x: number; y: number };
 		if (cardView.parent === compGame) {
 			startInRoot = { x: cardView.x, y: cardView.y };
@@ -263,49 +294,55 @@ export class GameWindow extends BaseWindow {
 		const endX = endInRoot.x - cardView.width / 2;
 		const endY = endInRoot.y - cardView.height / 2;
 
+		// 移到 compGame 下并置顶，避免被裁剪
 		const parent = cardView.parent;
 		if (parent) parent.removeChild(cardView);
 		compGame.addChild(cardView);
 		cardView.setPosition(startInRoot.x, startInRoot.y);
-		cardView.sortingOrder = 1000; // 确保飞行的卡牌显示在 handCard 上方，不被遮挡
+		cardView.sortingOrder = GameConfig.CARD_FLY_ORDER;
 
 		cardView.playThrowToHand(endX, endY, () => {
-			this.handValue = cardView.value;
-			CardView.setDigitalLoader(handCard.m_typeLoader, this.handValue, cardView.suit);
+			if (this._hidden) return;
+			this._gameState.handValue = cardView.value;
+			CardView.setDigitalLoader(handCard.m_typeLoader, this._gameState.handValue, cardView.suit);
 			cardView.isClear = true;
 			cardView.visible = false;
-			this._consecutiveShuffleDeadlockCount = 0; // 消除主牌时重置连续僵局计数
-			this.checkSide();
+			this._gameState.shuffleDeadlockCount = 0;
+			checkSide(this.cardMap, cardCfg as Record<string, CardLayoutCfg>);
 
-			const elapsed = this._gameStartTime != null ? Date.now() - this._gameStartTime : 0;
-			const isSuccess = !this._gameSuccess && (this.isAllCardsCleared() || elapsed >= 30000);
+			const isSuccess =
+				!this._gameState.gameSuccess &&
+				(this._gameState.isAllCleared(this.cardMap) || this._gameState.isWinByTime());
 			if (isSuccess) {
-				this._gameSuccess = true;
+				this._gameState.gameSuccess = true;
 				this.onGameSuccess();
 			} else {
-				// 检查是否都不能消除，若僵局则切换到第二个引导并播放滑入+抖动动画（若第二个引导已居中则无视）
-				if (this.isNoEliminableCard() && this.compGame.m_ctrlGuide.selectedIndex !== 1) {
+				// 僵局时切换到洗牌引导（标题滑入、箭头指洗牌区）
+				if (this._gameState.isDeadlock(this.cardMap) && this.compGame.m_ctrlGuide.selectedIndex !== 1) {
 					this.compGame.m_ctrlGuide.selectedIndex = 1;
-					this.showCompArrowAboveShuffle();
-					this.playTitleSlideIn(0);
+					this._guide.showArrowAboveShuffle(this.shuffleCardViews);
+					this._titleAnimator.playTitleSlideIn(0);
 				}
 				this.contentPane.touchable = true;
-				this.startHintShakeTimerIfNeeded();
+				this.startHintTimer();
 			}
 		});
 	}
 
-	/** 洗牌区 top 牌：翻面 + 平移到手牌，更新手牌数值 */
-	private playShuffleCardToHand(cardView: CardView) {
+	/**
+	 * 洗牌区顶牌飞向手牌：翻面+平移动画，结束后更新手牌、从洗牌区移除、刷新正反面与僵局计数；
+	 * 若僵局则切洗牌引导，若本在洗牌引导且已有牌可消则滑出标题；最后恢复点击与提示计时
+	 * @param cardView 洗牌区被点击的那张牌
+	 */
+	private playShuffleToHand(cardView: CardView): void {
 		this.contentPane.touchable = false;
-		this.hideCompArrow();
-		this.stopHintShakeTimer();
+		this._guide.hideCompArrow();
+		this._guide.stopHintTimer();
 
 		const shuffleArea = this.compGame.m_shuffleArea;
 		const handCard = this.compGame.m_handCard;
 		const compGame = this.compGame;
 
-		// 移到根容器，避免遮挡和裁剪
 		const cardGlobalStart = shuffleArea.localToGlobal(cardView.x, cardView.y);
 		const startInRoot = compGame.globalToLocal(cardGlobalStart.x, cardGlobalStart.y);
 		const handCenterGlobal = handCard.localToGlobal(handCard.width / 2, handCard.height / 2);
@@ -316,436 +353,104 @@ export class GameWindow extends BaseWindow {
 		shuffleArea.removeChild(cardView);
 		compGame.addChild(cardView);
 		cardView.setPosition(startInRoot.x, startInRoot.y);
-		cardView.sortingOrder = 1000;
+		cardView.sortingOrder = GameConfig.CARD_FLY_ORDER;
 
-		cardView.playFlipAndSlideToHand(endX, endY, () => {
-			this.handValue = cardView.value;
-			CardView.setDigitalLoader(handCard.m_typeLoader, this.handValue, cardView.suit);
+		cardView.playFlipToHand(endX, endY, () => {
+			if (this._hidden) return;
+			this._gameState.handValue = cardView.value;
+			CardView.setDigitalLoader(handCard.m_typeLoader, this._gameState.handValue, cardView.suit);
 			compGame.removeChild(cardView);
 
-			// 从洗牌区移除已使用的牌
 			const idx = this.shuffleCardViews.indexOf(cardView);
 			if (idx >= 0) this.shuffleCardViews.splice(idx, 1);
-			// 新的 top 牌可点击；若洗牌区已空则重新补充
 			if (this.shuffleCardViews.length > 0) {
 				for (let i = 0; i < this.shuffleCardViews.length; i++) {
-					this.shuffleCardViews[i].touchable = (i === this.shuffleCardViews.length - 1);
+					this.shuffleCardViews[i].touchable = i === this.shuffleCardViews.length - 1;
 				}
 			} else {
 				this.initShuffleCards();
 			}
 
-			this.checkSide();
-			// 更新连续 shuffle 僵局计数
-			if (this.isNoEliminableCard()) {
-				this._consecutiveShuffleDeadlockCount++;
+			checkSide(this.cardMap, cardCfg as Record<string, CardLayoutCfg>);
+			if (this._gameState.isDeadlock(this.cardMap)) {
+				this._gameState.shuffleDeadlockCount++;
 			} else {
-				this._consecutiveShuffleDeadlockCount = 0;
+				this._gameState.shuffleDeadlockCount = 0;
 			}
-			// 若僵局则切换到第二个引导（若第二个引导已居中则无视）
-			if (this.isNoEliminableCard() && this.compGame.m_ctrlGuide.selectedIndex !== 1) {
+
+			if (this._gameState.isDeadlock(this.cardMap) && this.compGame.m_ctrlGuide.selectedIndex !== 1) {
 				this.compGame.m_ctrlGuide.selectedIndex = 1;
-				this.showCompArrowAboveShuffle();
-				this.playTitleSlideIn(0);
-			}
-			// 第二个引导正在屏幕中间时，shuffle 后若查到有牌可消除，则移出引导
-			else if (this.compGame.m_ctrlGuide.selectedIndex === 1 && !this.isNoEliminableCard()) {
-				this.hideCompArrow();
-				this.playTitleSlideOut();
+				this._guide.showArrowAboveShuffle(this.shuffleCardViews);
+				this._titleAnimator.playTitleSlideIn(0);
+			} else if (this.compGame.m_ctrlGuide.selectedIndex === 1 && !this._gameState.isDeadlock(this.cardMap)) {
+				this._guide.hideCompArrow();
+				this._titleAnimator.playTitleSlideOut(() => {
+					this.compGame.m_ctrlGuide.selectedIndex = 0;
+					this.compGame.m_imgTitle.visible = false;
+					this._guide.hideCompArrow();
+				});
 			}
 			this.contentPane.touchable = true;
-			this.startHintShakeTimerIfNeeded();
+			this.startHintTimer();
 		});
 	}
 
-	/** 返回一个与某张可见牌相邻的手牌数值，用于保证 shuffle 后必定可消除；若无可消除牌则返回 null */
-	private getGuaranteedEliminableHandValue(): number | null {
-		const goodValues: number[] = [];
-		for (const [, cardView] of this.cardMap) {
-			if (cardView.isClear) continue;
-			if (cardView.m_ctrlSide.selectedIndex !== 0) continue;
-			const v = cardView.value;
-			if (v > 1) goodValues.push(v - 1);
-			if (v < 13) goodValues.push(v + 1);
-			if (v === 1) goodValues.push(13);
-			if (v === 13) goodValues.push(1);
-		}
-		if (goodValues.length === 0) return null;
-		return goodValues[Math.floor(Math.random() * goodValues.length)];
-	}
-
-	/** 根据配置初始化手牌上显示的数字 */
-	private initHandCards() {
+	/** 根据 handCardCfg 初始化手牌显示的数字 */
+	private initHandCards(): void {
 		const handCard = this.compGame.m_handCard;
 		if (!handCard) return;
-		this.handValue = handCardCfg.initialValue;
-		CardView.setDigitalLoader(handCard.m_typeLoader, this.handValue);
+		this._gameState.handValue = handCardCfg.initialValue;
+		CardView.setDigitalLoader(handCard.m_typeLoader, this._gameState.handValue);
 	}
 
-	/** imgTitle 从屏幕左侧滑入到中间，到达后持续上下小幅度抖动 */
-	private playTitleSlideIn(delay: number) {
-		this._titleJitterTween?.stop();
-		this._titleJitterTween = null;
-
-		const img = this.compGame.m_imgTitle;
-		img.visible = true;
-		const startX = -img.width;
-		const centerX = (this.compGame.width - img.width) / 2;
-		const baseY = img.y;
-
-		img.setPosition(startX, baseY);
-
-		const state = { x: startX };
-		tween(state)
-			.delay(delay)
-			.to(0.5, { x: centerX }, {
-				easing: "backOut",
-				onUpdate: () => {
-					img.setPosition(state.x, baseY);
-				}
-			})
-			.call(() => this.playTitleJitter(img, centerX, baseY))
-			.start();
+	/** 在未过关、非僵局、无首次引导时，启动 5 秒提示计时（到点晃动一张可消除牌） */
+	private startHintTimer(): void {
+		this._guide.startHintTimer(
+			() =>
+				!this._gameState.gameSuccess &&
+				!this._gameState.isDeadlock(this.cardMap) &&
+				this._guide.getGuideCard() == null,
+			() => this._gameState.getOneEliminable(this.cardMap)
+		);
 	}
 
-	/** imgTitle 到达中心后持续的上下小幅度抖动 */
-	private playTitleJitter(img: fgui.GObject, centerX: number, baseY: number) {
-		const amplitude = 4;
-		const state = { y: baseY };
-		const updatePos = () => img.setPosition(centerX, state.y);
-
-		this._titleJitterTween = tween(state)
-			.to(0.3, { y: baseY + amplitude }, { easing: "sineInOut", onUpdate: updatePos })
-			.to(0.3, { y: baseY - amplitude }, { easing: "sineInOut", onUpdate: updatePos })
-			.union()
-			.repeatForever()
-			.start();
-	}
-
-	/** imgTitle 从中心向右飘出，与 SlideIn 完全对称 */
-	private playTitleSlideOut() {
-		this._titleJitterTween?.stop();
-		this._titleJitterTween = null;
-
-		const img = this.compGame.m_imgTitle;
-		const centerX = (this.compGame.width - img.width) / 2;
-		const endX = this.compGame.width;
-		const baseY = img.y;
-
-		img.setPosition(centerX, baseY);
-
-		const state = { x: centerX };
-		tween(state)
-			.to(0.5, { x: endX }, {
-				easing: "backIn",
-				onUpdate: () => {
-					img.setPosition(state.x, baseY);
-				}
-			})
-			.call(() => {
-				this.compGame.m_ctrlGuide.selectedIndex = 0;
-				this.compGame.m_imgTitle.visible = false;
-				this.hideCompArrow();
-			})
-			.start();
-	}
-
-	/** 首次消除新手引导：显示 mask，将一张可消除牌提到 mask 上方，显示箭头指向该牌并播放动画 */
-	private showFirstEliminateGuide(cardView: CardView) {
-		const compGame = this.compGame;
-		const cardCon = this.compGame.m_cardCon;
-		compGame.m_mask.visible = true;
-		const cardGlobal = cardCon.localToGlobal(cardView.x, cardView.y);
-		const inComp = compGame.globalToLocal(cardGlobal.x, cardGlobal.y);
-		cardCon.removeChild(cardView);
-		const maskIndex = compGame.getChildIndex(compGame.m_mask);
-		compGame.addChildAt(cardView, maskIndex + 1);
-		cardView.setPosition(inComp.x, inComp.y);
-		this._firstGuideCardView = cardView;
-		this.showCompArrowAboveCard(cardView);
-	}
-
-	/** 关闭首次消除引导：隐藏 mask、隐藏箭头并停止动画 */
-	private dismissFirstEliminateGuide() {
-		this.compGame.m_mask.visible = false;
-		this.hideCompArrow();
-	}
-
-	/** 将 compArrow 定位到指定卡牌（已在 compGame 内）上方并显示、播放 move 动画 */
-	private showCompArrowAboveCard(cardView: CardView) {
-		const arrow = this.compGame.m_compArrow;
-		const gap = 30;
-		const centerX = cardView.x
-		const arrowY = cardView.y - arrow.height - gap;
-		arrow.setPosition(centerX - arrow.width / 2, arrowY);
-		arrow.visible = true;
-		arrow.m_move.play(null, -1, 0);
-	}
-
-	/** 将 compArrow 定位到 shuffle 卡牌上方并显示、播放 move 动画（以最右边一张牌为标记位置） */
-	private showCompArrowAboveShuffle() {
-		if (this.shuffleCardViews.length === 0) return;
-		const arrow = this.compGame.m_compArrow;
-		const shuffleArea = this.compGame.m_shuffleArea;
-		const compGame = this.compGame;
-		const gap = 15;
-		const rightmostCard = this.shuffleCardViews[this.shuffleCardViews.length - 1];
-		const cardCenterX = rightmostCard.x;
-		const cardTopY = rightmostCard.y;
-		const global = shuffleArea.localToGlobal(cardCenterX, cardTopY);
-		const inComp = compGame.globalToLocal(global.x, global.y);
-		const arrowX = inComp.x - arrow.width / 2;
-		const arrowY = inComp.y - arrow.height - gap;
-		arrow.setPosition(arrowX, arrowY);
-		arrow.visible = true;
-		arrow.m_move.play(null, -1, 0);
-	}
-
-	/** 隐藏 compArrow 并停止 move 动画 */
-	private hideCompArrow() {
-		this.compGame.m_compArrow.m_move.stop();
-		this.compGame.m_compArrow.visible = false;
-	}
-
-	/** 停止 5 秒提示晃动计时 */
-	private stopHintShakeTimer() {
-		if (this._hintShakeTimerId != null) {
-			clearTimeout(this._hintShakeTimerId);
-			this._hintShakeTimerId = null;
-		}
-	}
-
-	/** 若有可消除牌则启动 5 秒提示计时，到点后晃动一张可消除牌（不播 error 音效），并每 5 秒重复直到正确消除或 shuffle */
-	private startHintShakeTimerIfNeeded() {
-		this.stopHintShakeTimer();
-		if (this._gameSuccess || this.isNoEliminableCard() || this._firstGuideCardView != null) return;
-		this._hintShakeTimerId = setTimeout(() => this.onHintShakeTick(), 5000);
-	}
-
-	private onHintShakeTick() {
-		this._hintShakeTimerId = null;
-		if (this._gameSuccess || this.isNoEliminableCard()) return;
-		const card = this.getOneEliminableCard();
-		if (card) {
-			card.playShake();
-		}
-		this._hintShakeTimerId = setTimeout(() => this.onHintShakeTick(), 5000);
-	}
-
-	/** 任选一张当前可消除的主牌（正面、未消除），用于提示晃动 */
-	private getOneEliminableCard(): CardView | null {
-		for (const [, cardView] of this.cardMap) {
-			if (cardView.isClear) continue;
-			if (cardView.m_ctrlSide.selectedIndex !== 0) continue;
-			if (this.canEliminate(cardView.value)) return cardView;
-		}
-		return null;
-	}
-
-	/**
-	 * 判断某张牌当前能否与手牌消除（相邻即可：1-2、12-13、1-13 等）
-	 */
-	private canEliminate(cardValue: number): boolean {
-		return Math.abs(cardValue - this.handValue) === 1 ||
-			(cardValue === 1 && this.handValue === 13) ||
-			(cardValue === 13 && this.handValue === 1);
-	}
-
-	/** 是否所有卡牌都已消除（游戏胜利） */
-	private isAllCardsCleared(): boolean {
-		for (const [, cardView] of this.cardMap) {
-			if (!cardView.isClear) return false;
-		}
-		return true;
-	}
-
-	/** 游戏成功：禁用所有卡牌和 shuffle、隐藏 guide、播放入场动效 */
-	private onGameSuccess() {
-		// 所有主牌禁止点击
+	/** 过关后：禁用所有卡牌与洗牌区点击、隐藏引导与标题、停止提示计时、播下载按钮滑入 */
+	private onGameSuccess(): void {
 		this.compGame.m_cardCon.touchable = false;
 		for (const [, cardView] of this.cardMap) {
 			cardView.touchable = false;
 		}
-		// 洗牌区域禁止点击
 		this.compGame.m_shuffleArea.touchable = false;
 		for (const card of this.shuffleCardViews) {
 			card.touchable = false;
 		}
 
-		// 不显示任何 guide
-		this._titleJitterTween?.stop();
-		this._titleJitterTween = null;
+		this._titleAnimator.stopJitter();
 		this.compGame.m_imgTitle.visible = false;
 		this.compGame.m_ctrlGuide.selectedIndex = 0;
-		this.hideCompArrow();
-		this.stopHintShakeTimer();
+		this._guide.hideCompArrow();
+		this._guide.stopHintTimer();
 
-		this.playBtnDownloadSlideIn();
+		this._startScreenAnimator.playDownloadSlideIn();
 		this.contentPane.touchable = true;
 	}
 
-	/** btnDownload 从屏幕外飘入中间，到达后循环缩放（锚点为图片中心） */
-	private playBtnDownloadSlideIn() {
-		const btn = this.compGame.m_btnDownload;
-		btn.visible = true;
-
-		const startX = -btn.width / 2;
-		const centerX = this.compGame.width / 2;
-		const baseY = btn.y;
-
-		btn.setPosition(startX, baseY);
-
-		const state = { x: startX };
-		tween(state)
-			.to(0.5, { x: centerX }, {
-				easing: "backOut",
-				onUpdate: () => {
-					btn.setPosition(state.x, baseY);
-				}
-			})
-			.call(() => this.playBtnDownloadScaleLoop())
-			.start();
-	}
-
-	/** btnDownload 到达中间后的循环缩放变大变小（锚点为中心，缩放时中心不变） */
-	private playBtnDownloadScaleLoop() {
-		const btn = this.compGame.m_btnDownload;
-		const centerX = this.compGame.width / 2;
-		const baseY = btn.y;
-		const minScale = 1;
-		const maxScale = 1.15;
-		const duration = 0.4;
-
-		const state = { scale: minScale };
-		this._btnDownloadScaleTween = tween(state)
-			.to(duration, { scale: maxScale }, {
-				easing: "sineInOut",
-				onUpdate: () => {
-					btn.setScale(state.scale, state.scale);
-					btn.setPosition(centerX, baseY);
-				}
-			})
-			.to(duration, { scale: minScale }, {
-				easing: "sineInOut",
-				onUpdate: () => {
-					btn.setScale(state.scale, state.scale);
-					btn.setPosition(centerX, baseY);
-				}
-			})
-			.union()
-			.repeatForever()
-			.start();
-	}
-
-	/** m_comStart 中 imgFinger 的循环旋转晃动效果（慢速） */
-	private playImgFingerSwayLoop() {
-		const finger = this.compGame.m_comStart.m_imgFinger;
-		const amplitude = 12;
-		const duration = 1.2;
-
-		const state = { rotation: -amplitude };
-		finger.rotation = -amplitude;
-		this._imgFingerSwayTween = tween(state)
-			.to(duration, { rotation: amplitude }, {
-				easing: "sineInOut",
-				onUpdate: () => {
-					finger.rotation = state.rotation;
-				}
-			})
-			.to(duration, { rotation: -amplitude }, {
-				easing: "sineInOut",
-				onUpdate: () => {
-					finger.rotation = state.rotation;
-				}
-			})
-			.union()
-			.repeatForever()
-			.start();
-	}
-
-	/** m_comStart 中 startCard 的循环放大缩小动画 */
-	private playStartCardScaleLoop() {
-		const card = this.compGame.m_comStart.m_startCard;
-		const minScale = 1;
-		const maxScale = 1.15;
-		const duration = 0.5;
-
-		const state = { scale: minScale };
-		this._startCardScaleTween = tween(state)
-			.to(duration, { scale: maxScale }, {
-				easing: "sineInOut",
-				onUpdate: () => {
-					card.setScale(state.scale, state.scale);
-				}
-			})
-			.to(duration, { scale: minScale }, {
-				easing: "sineInOut",
-				onUpdate: () => {
-					card.setScale(state.scale, state.scale);
-				}
-			})
-			.union()
-			.repeatForever()
-			.start();
-	}
-
-	/**
-	 * 遍历所有正面朝上且未消除的卡片，检查是否都不能消除
-	 * @returns true 表示没有任何可消除的牌（游戏僵局/需洗牌或结束）
-	 */
-	isNoEliminableCard(): boolean {
-		for (const [, cardView] of this.cardMap) {
-			if (cardView.isClear) continue;
-			if (cardView.m_ctrlSide.selectedIndex !== 0) continue; // 0 = 正面
-			if (this.canEliminate(cardView.value)) return false;
-		}
-		return true;
-	}
-
-	private checkSide() {
-		for (const [cfgKey, cardView] of this.cardMap) {
-			const cfg = cardCfg[cfgKey];
-			// cover 为空：正面 (0)
-			if (!cfg.cover || cfg.cover.length === 0) {
-				cardView.setFront();
-				continue;
-			}
-			// cover 有值：仅当 cover 中所有牌都 isClear 才正面，否则反面
-			const allCoverCleared = cfg.cover.every(coverKey => {
-				const coverCard = this.cardMap.get(coverKey);
-				return coverCard ? coverCard.isClear : false;
-			});
-
-			if (allCoverCleared) {
-				cardView.setFront();
-			} else {
-				cardView.setBack();
-			}
-		}
-	}
-
-	/**
-	 * 初始化洗牌区域
-	 */
-	private initShuffleCards() {
-
+	/** 初始化洗牌区：创建 SHUFFLE_PILE_SIZE 张随机牌，仅最上面一张可点 */
+	private initShuffleCards(): void {
 		this.shuffleCardViews = [];
-
-		for (let i = 0; i < 10; i++) {
-			const cardView: CardView = CardView.createInstance();
-			const value: number = Math.floor(Math.random() * 13) + 1;
+		for (let i = 0; i < GameConfig.SHUFFLE_PILE_SIZE; i++) {
+			const cardView = CardView.createInstance();
+			const value = Math.floor(Math.random() * 13) + 1;
 			cardView.setDigital(value);
 			this.shuffleCardViews.push(cardView);
 			this.compGame.m_shuffleArea.addChild(cardView);
 			cardView.setBack();
-			cardView.x = 50 + i * 25;
-			cardView.y = 72;
+			cardView.x = GameConfig.SHUFFLE_START_X + i * GameConfig.SHUFFLE_OFFSET_X;
+			cardView.y = GameConfig.SHUFFLE_Y;
 			cardView.on(fgui.Event.CLICK, this.onShuffleCardClick, this);
 		}
-
-		// 仅最上面一张牌可点击
 		for (let i = 0; i < this.shuffleCardViews.length; i++) {
-			this.shuffleCardViews[i].touchable = (i === this.shuffleCardViews.length - 1);
+			this.shuffleCardViews[i].touchable = i === this.shuffleCardViews.length - 1;
 		}
 	}
 }

@@ -18,12 +18,16 @@ export class GameWindow extends BaseWindow {
 	private handValue: number = 0;
 	private _titleJitterTween: { stop: () => void } | null = null;
 	private _btnDownloadScaleTween: { stop: () => void } | null = null;
+	private _startCardScaleTween: { stop: () => void } | null = null;
+	private _imgFingerSwayTween: { stop: () => void } | null = null;
 	private _isFirstEliminate = true;
 	/** 连续 shuffle 导致僵局的次数，达到 2 时下一次 shuffle 必定可消除 */
 	private _consecutiveShuffleDeadlockCount = 0;
 	/** 第一次点击时开始计时 */
 	private _gameStartTime: number | null = null;
 	private _gameSuccess = false;
+	/** 有牌可消除时每 5 秒提示晃动的定时器，正确消除或 shuffle 后清除 */
+	private _hintShakeTimerId: ReturnType<typeof setTimeout> | null = null;
 	protected onInit(): void {
 			// 创建 comp_Game 实例并设置为窗口内容
 			this.compGame = UI_comp_Game.createInstance();
@@ -34,12 +38,15 @@ export class GameWindow extends BaseWindow {
 
 	/** 用于 window resize 的回调绑定，便于 removeEventListener */
 	private _boundOnWindowResize = () => this.onWindowResize();
+	/** 用于开始界面的全屏点击 */
+	private _boundOnStartScreenClick = () => this.onStartScreenClick();
 
 	protected onShown(): void {
 		super.onShown();
-		this.showCard();
-		this.compGame.m_btnDownload.on(fgui.Event.CLICK, this.onBtnDownloadClick, this);
-
+		this.compGame.m_imgTitle.visible = false;
+		this.compGame.m_btnDownload.visible = false;
+		this.compGame.m_compArrow.m_move.stop();
+		this.compGame.m_compArrow.visible = false;
 		this.updateBgVisibility();
 		if (!sys.isMobile) {
 			// Web 端 screen.on('window-resize') 有 bug 只触发一次，改用原生 resize
@@ -49,10 +56,64 @@ export class GameWindow extends BaseWindow {
 				screen.on('window-resize', this.onWindowResize, this);
 			}
 		}
+
+		this.compGame.m_comStart.visible = true;
+		this.compGame.m_comStart.m_startCard.m_typeLoader.url =
+			fgui.UIPackage.getItemURL("Package1", "heart_1");
+		this.playStartCardScaleLoop();
+		this.playImgFingerSwayLoop();
+		this.contentPane.on(fgui.Event.CLICK, this._boundOnStartScreenClick, this);
 	}
+
+	/** 开始界面点击：停止手指动画并隐藏、m_comStart 飞出、然后 startGame */
+	private onStartScreenClick() {
+		this.contentPane.off(fgui.Event.CLICK, this._boundOnStartScreenClick, this);
+
+		this._startCardScaleTween?.stop();
+		this._startCardScaleTween = null;
+		this._imgFingerSwayTween?.stop();
+		this._imgFingerSwayTween = null;
+		this.compGame.m_comStart.m_imgFinger.visible = false;
+
+		const comStart = this.compGame.m_comStart;
+		const startY = comStart.y;
+		const endY = -comStart.height - 150;
+
+		const state = { y: startY };
+		tween(state)
+			.to(0.3, { y: endY }, {
+				easing: "backIn",
+				onUpdate: () => {
+					comStart.y = state.y;
+				}
+			})
+			.call(() => this.startGame())
+			.start();
+	}
+
+	private startGame() {
+		this._startCardScaleTween?.stop();
+		this._startCardScaleTween = null;
+		this._imgFingerSwayTween?.stop();
+		this._imgFingerSwayTween = null;
+		this.contentPane.off(fgui.Event.CLICK, this._boundOnStartScreenClick, this);
+		this.compGame.m_comStart.visible = false;
+		this.compGame.m_comStart.m_imgFinger.visible = true;
+		this.compGame.m_comStart.y = 0;
+		this.showCard();
+		this.compGame.m_btnDownload.on(fgui.Event.CLICK, this.onBtnDownloadClick, this);
+	}
+
+
 
 	protected onHide(): void {
 		super.onHide();
+		this.stopHintShakeTimer();
+		this.contentPane.off(fgui.Event.CLICK, this._boundOnStartScreenClick, this);
+		this._startCardScaleTween?.stop();
+		this._startCardScaleTween = null;
+		this._imgFingerSwayTween?.stop();
+		this._imgFingerSwayTween = null;
 		if (!sys.isMobile) {
 			if (sys.isBrowser && typeof window !== 'undefined') {
 				window.removeEventListener('resize', this._boundOnWindowResize);
@@ -96,8 +157,6 @@ export class GameWindow extends BaseWindow {
 		this.cardMap = new Map<string, CardView>();
 		this.initHandCards();
 		this.initShuffleCards();
-		this.compGame.m_imgTitle.visible = false;
-		this.compGame.m_btnDownload.visible = false;
 
 		let index = 0;
 		for (const key in cardCfg) {
@@ -120,6 +179,7 @@ export class GameWindow extends BaseWindow {
 		this.playTitleSlideIn(cardAnimEndTime);
 		tween({}).delay(cardAnimEndTime).call(() => {
 			this.contentPane.touchable = true;
+			this.startHintShakeTimerIfNeeded();
 		}).start();
 	}
 
@@ -168,6 +228,7 @@ export class GameWindow extends BaseWindow {
 	/** 播放卡牌消除动画：抛物线飞到 handCard，结束后隐藏并刷新布局 */
 	private playCardEliminate(cardView: CardView) {
 		this.contentPane.touchable = false;
+		this.stopHintShakeTimer();
 
 		if (this._isFirstEliminate) {
 			this._isFirstEliminate = false;
@@ -208,9 +269,11 @@ export class GameWindow extends BaseWindow {
 				// 检查是否都不能消除，若僵局则切换到第二个引导并播放滑入+抖动动画（若第二个引导已居中则无视）
 				if (this.isNoEliminableCard() && this.compGame.m_ctrlGuide.selectedIndex !== 1) {
 					this.compGame.m_ctrlGuide.selectedIndex = 1;
+					this.showCompArrowAboveShuffle();
 					this.playTitleSlideIn(0);
 				}
 				this.contentPane.touchable = true;
+				this.startHintShakeTimerIfNeeded();
 			}
 		});
 	}
@@ -218,6 +281,8 @@ export class GameWindow extends BaseWindow {
 	/** 洗牌区 top 牌：翻面 + 平移到手牌，更新手牌数值 */
 	private playShuffleCardToHand(cardView: CardView) {
 		this.contentPane.touchable = false;
+		this.hideCompArrow();
+		this.stopHintShakeTimer();
 
 		const shuffleArea = this.compGame.m_shuffleArea;
 		const handCard = this.compGame.m_handCard;
@@ -263,13 +328,16 @@ export class GameWindow extends BaseWindow {
 			// 若僵局则切换到第二个引导（若第二个引导已居中则无视）
 			if (this.isNoEliminableCard() && this.compGame.m_ctrlGuide.selectedIndex !== 1) {
 				this.compGame.m_ctrlGuide.selectedIndex = 1;
+				this.showCompArrowAboveShuffle();
 				this.playTitleSlideIn(0);
 			}
 			// 第二个引导正在屏幕中间时，shuffle 后若查到有牌可消除，则移出引导
 			else if (this.compGame.m_ctrlGuide.selectedIndex === 1 && !this.isNoEliminableCard()) {
+				this.hideCompArrow();
 				this.playTitleSlideOut();
 			}
 			this.contentPane.touchable = true;
+			this.startHintShakeTimerIfNeeded();
 		});
 	}
 
@@ -360,8 +428,69 @@ export class GameWindow extends BaseWindow {
 			.call(() => {
 				this.compGame.m_ctrlGuide.selectedIndex = 0;
 				this.compGame.m_imgTitle.visible = false;
+				this.hideCompArrow();
 			})
 			.start();
+	}
+
+	/** 将 compArrow 定位到 shuffle 卡牌上方并显示、播放 move 动画（以最右边一张牌为标记位置） */
+	private showCompArrowAboveShuffle() {
+		if (this.shuffleCardViews.length === 0) return;
+		const arrow = this.compGame.m_compArrow;
+		const shuffleArea = this.compGame.m_shuffleArea;
+		const compGame = this.compGame;
+		const gap = 15;
+		const rightmostCard = this.shuffleCardViews[this.shuffleCardViews.length - 1];
+		const cardCenterX = rightmostCard.x;
+		const cardTopY = rightmostCard.y;
+		const global = shuffleArea.localToGlobal(cardCenterX, cardTopY);
+		const inComp = compGame.globalToLocal(global.x, global.y);
+		const arrowX = inComp.x - arrow.width / 2;
+		const arrowY = inComp.y - arrow.height - gap;
+		arrow.setPosition(arrowX, arrowY);
+		arrow.visible = true;
+		arrow.m_move.play(null, -1, 0);
+	}
+
+	/** 隐藏 compArrow 并停止 move 动画 */
+	private hideCompArrow() {
+		this.compGame.m_compArrow.m_move.stop();
+		this.compGame.m_compArrow.visible = false;
+	}
+
+	/** 停止 5 秒提示晃动计时 */
+	private stopHintShakeTimer() {
+		if (this._hintShakeTimerId != null) {
+			clearTimeout(this._hintShakeTimerId);
+			this._hintShakeTimerId = null;
+		}
+	}
+
+	/** 若有可消除牌则启动 5 秒提示计时，到点后晃动一张可消除牌（不播 error 音效），并每 5 秒重复直到正确消除或 shuffle */
+	private startHintShakeTimerIfNeeded() {
+		this.stopHintShakeTimer();
+		if (this._gameSuccess || this.isNoEliminableCard()) return;
+		this._hintShakeTimerId = setTimeout(() => this.onHintShakeTick(), 5000);
+	}
+
+	private onHintShakeTick() {
+		this._hintShakeTimerId = null;
+		if (this._gameSuccess || this.isNoEliminableCard()) return;
+		const card = this.getOneEliminableCard();
+		if (card) {
+			card.playShake();
+		}
+		this._hintShakeTimerId = setTimeout(() => this.onHintShakeTick(), 5000);
+	}
+
+	/** 任选一张当前可消除的主牌（正面、未消除），用于提示晃动 */
+	private getOneEliminableCard(): CardView | null {
+		for (const [, cardView] of this.cardMap) {
+			if (cardView.isClear) continue;
+			if (cardView.m_ctrlSide.selectedIndex !== 0) continue;
+			if (this.canEliminate(cardView.value)) return cardView;
+		}
+		return null;
 	}
 
 	/**
@@ -399,6 +528,8 @@ export class GameWindow extends BaseWindow {
 		this._titleJitterTween = null;
 		this.compGame.m_imgTitle.visible = false;
 		this.compGame.m_ctrlGuide.selectedIndex = 0;
+		this.hideCompArrow();
+		this.stopHintShakeTimer();
 
 		this.playBtnDownloadSlideIn();
 		this.contentPane.touchable = true;
@@ -450,6 +581,58 @@ export class GameWindow extends BaseWindow {
 				onUpdate: () => {
 					btn.setScale(state.scale, state.scale);
 					btn.setPosition(centerX, baseY);
+				}
+			})
+			.union()
+			.repeatForever()
+			.start();
+	}
+
+	/** m_comStart 中 imgFinger 的循环旋转晃动效果（慢速） */
+	private playImgFingerSwayLoop() {
+		const finger = this.compGame.m_comStart.m_imgFinger;
+		const amplitude = 12;
+		const duration = 1.2;
+
+		const state = { rotation: -amplitude };
+		finger.rotation = -amplitude;
+		this._imgFingerSwayTween = tween(state)
+			.to(duration, { rotation: amplitude }, {
+				easing: "sineInOut",
+				onUpdate: () => {
+					finger.rotation = state.rotation;
+				}
+			})
+			.to(duration, { rotation: -amplitude }, {
+				easing: "sineInOut",
+				onUpdate: () => {
+					finger.rotation = state.rotation;
+				}
+			})
+			.union()
+			.repeatForever()
+			.start();
+	}
+
+	/** m_comStart 中 startCard 的循环放大缩小动画 */
+	private playStartCardScaleLoop() {
+		const card = this.compGame.m_comStart.m_startCard;
+		const minScale = 1;
+		const maxScale = 1.15;
+		const duration = 0.5;
+
+		const state = { scale: minScale };
+		this._startCardScaleTween = tween(state)
+			.to(duration, { scale: maxScale }, {
+				easing: "sineInOut",
+				onUpdate: () => {
+					card.setScale(state.scale, state.scale);
+				}
+			})
+			.to(duration, { scale: minScale }, {
+				easing: "sineInOut",
+				onUpdate: () => {
+					card.setScale(state.scale, state.scale);
 				}
 			})
 			.union()

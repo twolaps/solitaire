@@ -3,6 +3,8 @@
 import * as fgui from "fairygui-cc";
 import UI_comp_Card from "./UI_comp_Card";
 import UI_comp_Shuffle from "./UI_comp_Shuffle";
+import UI_comp_Start from "./UI_comp_Start";
+import UI_comp_Arrow from "./UI_comp_Arrow";
 
 export default class UI_comp_Game extends fgui.GComponent {
 
@@ -15,6 +17,8 @@ export default class UI_comp_Game extends fgui.GComponent {
 	public m_shuffleArea:UI_comp_Shuffle;
 	public m_imgTitle:fgui.GLoader;
 	public m_btnDownload:fgui.GLoader;
+	public m_comStart:UI_comp_Start;
+	public m_compArrow:UI_comp_Arrow;
 	public static URL:string = "ui://1yx7aoelt01j2";
 
 	public static createInstance():UI_comp_Game {
@@ -31,5 +35,7 @@ export default class UI_comp_Game extends fgui.GComponent {
 		this.m_shuffleArea = <UI_comp_Shuffle>(this.getChild("shuffleArea"));
 		this.m_imgTitle = <fgui.GLoader>(this.getChild("imgTitle"));
 		this.m_btnDownload = <fgui.GLoader>(this.getChild("btnDownload"));
+		this.m_comStart = <UI_comp_Start>(this.getChild("comStart"));
+		this.m_compArrow = <UI_comp_Arrow>(this.getChild("compArrow"));
 	}
 }

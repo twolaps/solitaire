@@ -1,6 +1,6 @@
 import { tween, screen, sys } from "cc";
 import * as fgui from "fairygui-cc";
-import { cardCfg, handCardCfg } from "../config/CardConfig";
+import { cardCfg, levelConfigs } from "../config/CardConfig";
 import UI_comp_Game from "../fgui/Package1/UI_comp_Game";
 import { CardView } from "./components/CardView";
 import { BaseWindow } from "../manager/BaseWindow";
@@ -41,6 +41,8 @@ export class GameWindow extends BaseWindow {
 
 	/** 窗口已隐藏时置为 true，延迟回调中检查以避免在隐藏后继续执行逻辑 */
 	private _hidden = false;
+	/** 本次进入游戏随机到的关卡索引（0 ~ levelConfigs.length-1），在 startGame 时确定 */
+	private _currentLevelIndex: number = 0;
 
 	protected onInit(): void {
 		this.compGame = UI_comp_Game.createInstance();
@@ -104,8 +106,9 @@ export class GameWindow extends BaseWindow {
 			.start();
 	}
 
-	/** 点击后正式开始：隐藏开始界面、发牌、绑定下载按钮点击 */
+	/** 点击后正式开始：随机选关、隐藏开始界面、发牌、绑定下载按钮点击 */
 	private startGame(): void {
+		this._currentLevelIndex = Math.floor(Math.random() * levelConfigs.length);
 		this._startScreenAnimator.stopAll();
 		this.contentPane.off(fgui.Event.CLICK, this._onStartClick, this);
 		this.compGame.m_comStart.visible = false;
@@ -184,11 +187,12 @@ export class GameWindow extends BaseWindow {
 		this.initHandCards();
 		this.initShuffleCards();
 
+		const levelCards = levelConfigs[this._currentLevelIndex].cards;
 		let index = 0;
 		for (const key in cardCfg) {
 			const cfg = cardCfg[key];
 			const cardView = CardView.createInstance();
-			cardView.setDigital(cfg.value);
+			cardView.setDigital(levelCards[key]);
 			this.cardMap.set(key, cardView);
 			cardView.cfgKey = key;
 			cardView.on(fgui.Event.CLICK, this.onCardClick, this);
@@ -395,11 +399,11 @@ export class GameWindow extends BaseWindow {
 		});
 	}
 
-	/** 根据 handCardCfg 初始化手牌显示的数字 */
+	/** 根据当前关卡 levelConfigs 初始化手牌显示的数字 */
 	private initHandCards(): void {
 		const handCard = this.compGame.m_handCard;
 		if (!handCard) return;
-		this._gameState.handValue = handCardCfg.initialValue;
+		this._gameState.handValue = levelConfigs[this._currentLevelIndex].handValue;
 		CardView.setDigitalLoader(handCard.m_typeLoader, this._gameState.handValue);
 	}
 

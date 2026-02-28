@@ -19,8 +19,8 @@ export class Main extends Component {
 	public bgmClip: AudioClip = null!;
 
 	async onLoad() {
-		this.fitScreen();
 		UIManager.inst.initRoot();
+		this.fitScreen();
 		AudioManager.inst;
 		AudioManager.inst.playMusic(this.bgmClip);
 
@@ -37,19 +37,34 @@ export class Main extends Component {
 	}
 
 	/**
-	 * 根据设计分辨率与当前窗口比例选择适配策略：宽屏固定高度，窄屏固定宽度
+	 * 更加健壮的适配逻辑：
+	 * 1. 监听 view 的 resize 事件
+	 * 2. 动态切换 FIXED_WIDTH 和 FIXED_HEIGHT
 	 */
 	fitScreen() {
-		let designSize = view.getDesignResolutionSize();
-		let frameSize = screen.windowSize;
+		const designSize = view.getDesignResolutionSize();
+		// 监听窗口尺寸变化
+		view.on('view-resize', () => {
+				this.applyAdaptation(designSize);
+				// 这一步确保 fgui 的坐标系与 cocos 视图对齐
+				fgui.GRoot.inst.setSize(view.getVisibleSize().width, view.getVisibleSize().height);
+		});
+		// 初始执行一次
+		this.applyAdaptation(designSize);
+		
+	}
 
-		let designRatio = designSize.width / designSize.height;
-		let frameRatio = frameSize.width / frameSize.height;
+	private applyAdaptation(designSize: { width: number, height: number }) {
+		const frameSize = screen.windowSize;
+		const designRatio = designSize.width / designSize.height;
+		const frameRatio = frameSize.width / frameSize.height;
 
+		// 如果屏幕比设计分辨率更“宽”（如 PC 宽屏），固定高度，左右留白（或扩展）
+		// 如果屏幕比设计分辨率更“窄”（如 手机长屏），固定宽度，上下留白（或扩展）
 		if (frameRatio > designRatio) {
-			view.setResolutionPolicy(ResolutionPolicy.FIXED_HEIGHT);
+				view.setResolutionPolicy(ResolutionPolicy.FIXED_HEIGHT);
 		} else {
-			view.setResolutionPolicy(ResolutionPolicy.FIXED_WIDTH);
+				view.setResolutionPolicy(ResolutionPolicy.FIXED_WIDTH);
 		}
 	}
 
